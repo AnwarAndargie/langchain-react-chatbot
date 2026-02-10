@@ -8,36 +8,37 @@ services:
     ports:
       - "8000:8000"
     env_file:
-      - ./backend/.env
+      - .env
     volumes:
       - ./backend:/app
     depends_on:
-      - db
+      trends-mcp:
+        condition: service_healthy
+    environment:
+      - MCP_URL=http://trends-mcp:8080
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    ports:
-      - "3000:3000"
     env_file:
-      - ./frontend/.env
+      - .env
     volumes:
       - ./frontend:/app
       - /app/node_modules
     depends_on:
       - backend
-
-  db:
-    image: postgres:15
+  trends-mcp:
+    build: ./google-news-trends-mcp
+    container_name: google-trends-mcp
     ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: langchain_chatbot
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - "9000:8080"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/.well-known/mcp.json"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
 volumes:
   postgres_data:

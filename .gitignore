@@ -1,0 +1,14 @@
+# Node modules
+node_modules/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Docker
+*.dockerignore
+Dockerfile
+
+# Environment variables
+.env
+.env.*
