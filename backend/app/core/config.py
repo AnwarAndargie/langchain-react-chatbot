@@ -32,10 +32,16 @@ class Settings(BaseSettings):
 
     # Tavily API Configuration (default empty; required for web search tool)
     tavily_api_key: str = ""
+    tavily_timeout_seconds: int = 30
+    tavily_max_results: int = 5
+    tavily_search_depth: str = "basic"  # basic | advanced (advanced uses more credits)
 
     # Google Trends MCP Configuration
     mcp_url: str = "http://google-trends-mcp:8080"
     mcp_timeout: int = 30
+    mcp_max_retries: int = 2
+    # Optional: Bearer token for MCP server auth (e.g. "Bearer <token>"). Empty = no header.
+    mcp_auth_header: str = ""
 
     # JWT Configuration (default empty; required for auth)
     jwt_secret: str = ""
