@@ -5,6 +5,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    container_name: langchain-chatbot-backend
     ports:
       - "8000:8000"
     env_file:
@@ -12,33 +13,57 @@ services:
     volumes:
       - ./backend:/app
     depends_on:
-      trends-mcp:
+      google-trends-mcp:
         condition: service_healthy
     environment:
-      - MCP_URL=http://trends-mcp:8080
+      - MCP_URL=http://google-trends-mcp:8080
+    networks:
+      - chatbot-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    container_name: langchain-chatbot-frontend
+    ports:
+      - "5173:5173"
     env_file:
       - .env
     volumes:
       - ./frontend:/app
       - /app/node_modules
     depends_on:
-      - backend
-  trends-mcp:
+      backend:
+        condition: service_healthy
+    networks:
+      - chatbot-network
+    restart: unless-stopped
+
+  google-trends-mcp:
     build: ./google-news-trends-mcp
     container_name: google-trends-mcp
     ports:
       - "9000:8080"
+    networks:
+      - chatbot-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/.well-known/mcp.json"]
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 30s
+
+networks:
+  chatbot-network:
+    driver: bridge
 
 volumes:
   postgres_data:
