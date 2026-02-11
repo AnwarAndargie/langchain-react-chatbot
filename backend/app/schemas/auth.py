@@ -1,23 +1,41 @@
 """Authentication request and response schemas"""
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from uuid import UUID
 from datetime import datetime
+import re
+
+# Basic email format (allows example.com and other reserved domains for testing)
+EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 
 class RegisterRequest(BaseModel):
     """User registration request schema"""
-    
-    email: EmailStr = Field(..., description="User email address")
+
+    email: str = Field(..., min_length=1, description="User email address")
     password: str = Field(..., min_length=8, description="User password (minimum 8 characters)")
+
+    @field_validator("email")
+    @classmethod
+    def email_format(cls, v: str) -> str:
+        if not EMAIL_PATTERN.match(v.strip()):
+            raise ValueError("Invalid email format")
+        return v.strip().lower()
 
 
 class LoginRequest(BaseModel):
     """User login request schema"""
-    
-    email: EmailStr = Field(..., description="User email address")
+
+    email: str = Field(..., min_length=1, description="User email address")
     password: str = Field(..., description="User password")
+
+    @field_validator("email")
+    @classmethod
+    def email_format(cls, v: str) -> str:
+        if not EMAIL_PATTERN.match(v.strip()):
+            raise ValueError("Invalid email format")
+        return v.strip().lower()
 
 
 class AuthResponse(BaseModel):

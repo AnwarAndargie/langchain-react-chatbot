@@ -20,25 +20,25 @@ class Settings(BaseSettings):
     # CORS Configuration
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
 
-    # Supabase Configuration
-    supabase_url: str
-    supabase_key: str
-    supabase_service_role_key: str
-    supabase_jwt_secret: str
+    # Supabase Configuration (default empty so app starts without .env; required for auth)
+    supabase_url: str = ""
+    supabase_key: str = ""
+    supabase_service_role_key: str = ""
+    supabase_jwt_secret: str = ""
 
-    # Google Gemini Configuration
-    gemini_api_key: str
+    # Google Gemini Configuration (default empty; required for chat agent)
+    gemini_api_key: str = ""
     gemini_model: str = "gemini-1.5-flash"
 
-    # Tavily API Configuration
-    tavily_api_key: str
+    # Tavily API Configuration (default empty; required for web search tool)
+    tavily_api_key: str = ""
 
     # Google Trends MCP Configuration
     mcp_url: str = "http://google-trends-mcp:8080"
     mcp_timeout: int = 30
 
-    # JWT Configuration
-    jwt_secret: str
+    # JWT Configuration (default empty; required for auth)
+    jwt_secret: str = ""
     jwt_algorithm: str = "HS256"
     jwt_expiration_hours: int = 24
 

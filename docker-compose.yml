@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   backend:
     build:
@@ -55,10 +53,10 @@ services:
       - chatbot-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/.well-known/mcp.json"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/healthz"]
       interval: 10s
       timeout: 5s
-      retries: 3
+      retries: 5
       start_period: 30s
 
 networks:

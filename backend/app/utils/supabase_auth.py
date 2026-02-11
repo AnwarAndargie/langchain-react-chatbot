@@ -7,6 +7,11 @@ from app.core import settings
 from app.services.db.supabase_client import get_supabase_client, get_supabase_admin_client
 
 
+class AuthRateLimitError(Exception):
+    """Raised when Supabase auth rate limit is exceeded."""
+    pass
+
+
 def signup_user(email: str, password: str) -> Tuple[Optional[dict], Optional[str]]:
     """
     Register a new user with Supabase Auth
@@ -36,6 +41,11 @@ def signup_user(email: str, password: str) -> Tuple[Optional[dict], Optional[str
             return None, "Failed to create user"
             
     except Exception as e:
+        err = str(e).lower()
+        if "rate limit" in err or "rate_limit" in err:
+            raise AuthRateLimitError(
+                "Too many sign-up attempts. Please try again in an hour."
+            ) from e
         return None, str(e)
 
 
@@ -74,7 +84,14 @@ def signin_user(email: str, password: str) -> Tuple[Optional[dict], Optional[str
             
     except Exception as e:
         error_msg = str(e)
-        if "Invalid login credentials" in error_msg or "Email not confirmed" in error_msg:
+        err_lower = error_msg.lower()
+        if "rate limit" in err_lower or "rate_limit" in err_lower:
+            raise AuthRateLimitError(
+                "Too many login attempts. Please try again in an hour."
+            ) from e
+        if "email not confirmed" in err_lower:
+            return None, "Email not confirmed. Please check your inbox and click the confirmation link."
+        if "invalid login credentials" in err_lower:
             return None, "Invalid email or password"
         return None, error_msg
 
