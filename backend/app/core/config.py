@@ -26,9 +26,9 @@ class Settings(BaseSettings):
     supabase_service_role_key: str
     supabase_jwt_secret: str
 
-    # OpenAI Configuration
-    openai_api_key: str
-    openai_model: str = "gpt-4o-mini"
+    # Google Gemini Configuration
+    gemini_api_key: str
+    gemini_model: str = "gemini-1.5-flash"
 
     # Tavily API Configuration
     tavily_api_key: str
