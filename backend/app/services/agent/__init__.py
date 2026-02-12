@@ -2,6 +2,7 @@
 
 from app.services.agent.agent_service import (
     get_agent,
+    get_streaming_agent,
     invoke_agent,
     invoke_agent_async,
     stream_agent_async,
@@ -9,6 +10,7 @@ from app.services.agent.agent_service import (
 
 __all__ = [
     "get_agent",
+    "get_streaming_agent",
     "invoke_agent",
     "invoke_agent_async",
     "stream_agent_async",
