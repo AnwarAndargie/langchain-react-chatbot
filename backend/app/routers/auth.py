@@ -1,30 +1,28 @@
 """Authentication router"""
 
-from fastapi import APIRouter, HTTPException, status, Depends, Request
+import time
+from fastapi import APIRouter, HTTPException, status, Depends
 from app.schemas.auth import RegisterRequest, LoginRequest, AuthResponse
-from app.utils.auth import create_access_token
 from app.utils.supabase_auth import signup_user, signin_user, signout_user, AuthRateLimitError
 from app.middleware import get_current_user
-from datetime import timedelta
 
 router = APIRouter()
+
+
+def _expires_in_seconds(expires_at: float | None) -> int:
+    """Compute expires_in (seconds until expiry) from Supabase session expires_at (Unix timestamp)."""
+    if expires_at is None:
+        return 86400  # 24h default
+    now = time.time()
+    return max(0, int(expires_at - now))
 
 
 @router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
 async def register(request: RegisterRequest):
     """
-    Register a new user
-    
-    Args:
-        request: Registration request with email and password
-        
-    Returns:
-        AuthResponse with access token and user information
-        
-    Raises:
-        HTTPException: If registration fails
+    Register a new user. Returns Supabase access token so the client can use it
+    for API auth and so RLS applies correctly on the backend.
     """
-    # Register user with Supabase
     try:
         user_data, error = signup_user(request.email, request.password)
     except AuthRateLimitError as e:
@@ -38,41 +36,22 @@ async def register(request: RegisterRequest):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=error or "Registration failed"
         )
-    
-    # Create JWT access token
-    access_token = create_access_token(
-        user_id=user_data["id"],
-        email=user_data["email"]
-    )
-    
-    # Calculate expiration time in seconds
-    from app.core import settings
-    expires_in = settings.jwt_expiration_hours * 3600
-    
+
     return AuthResponse(
-        access_token=access_token,
+        access_token=user_data["access_token"],
         token_type="bearer",
         user_id=user_data["id"],
         email=user_data["email"],
-        expires_in=expires_in
+        expires_in=_expires_in_seconds(user_data.get("expires_at")),
     )
 
 
 @router.post("/login", response_model=AuthResponse)
 async def login(request: LoginRequest):
     """
-    Login user and return access token
-    
-    Args:
-        request: Login request with email and password
-        
-    Returns:
-        AuthResponse with access token and user information
-        
-    Raises:
-        HTTPException: If login fails
+    Login user. Returns Supabase access token so the client can use it for API auth
+    and so RLS applies correctly on the backend.
     """
-    # Authenticate user with Supabase
     try:
         auth_data, error = signin_user(request.email, request.password)
     except AuthRateLimitError as e:
@@ -86,25 +65,14 @@ async def login(request: LoginRequest):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=error or "Invalid credentials"
         )
-    
+
     user = auth_data["user"]
-    
-    # Create JWT access token
-    access_token = create_access_token(
-        user_id=user["id"],
-        email=user["email"]
-    )
-    
-    # Calculate expiration time in seconds
-    from app.core import settings
-    expires_in = settings.jwt_expiration_hours * 3600
-    
     return AuthResponse(
-        access_token=access_token,
+        access_token=auth_data["access_token"],
         token_type="bearer",
         user_id=user["id"],
         email=user["email"],
-        expires_in=expires_in
+        expires_in=_expires_in_seconds(auth_data.get("expires_at")),
     )
 
 

@@ -176,16 +176,29 @@ def _create_agent():
 
 
 def _create_fallback_chain():
-    """Fallback when no tools are available: simple LLM chain."""
-    from langchain_core.prompts import ChatPromptTemplate
-    from langchain_core.runnables import RunnablePassthrough
+    """Fallback when no tools are available: LLM chain with conversation history."""
+    from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
     llm = _get_llm()
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are a helpful assistant. Answer the user concisely."),
+        ("system", "You are a helpful assistant. Answer the user concisely. Use the conversation history for context when the user refers to earlier messages."),
+        MessagesPlaceholder(variable_name="chat_history", optional=True),
         ("human", "{input}"),
     ])
     return prompt | llm | (lambda m: m.content if hasattr(m, "content") else str(m))
+
+
+def _create_fallback_chain_streaming():
+    """Same as fallback but without final lambda so we can stream LLM tokens."""
+    from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+
+    llm = _get_llm()
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "You are a helpful assistant. Answer the user concisely. Use the conversation history for context when the user refers to earlier messages."),
+        MessagesPlaceholder(variable_name="chat_history", optional=True),
+        ("human", "{input}"),
+    ])
+    return prompt | llm
 
 
 # Lazy singleton executor (created on first use)
@@ -245,31 +258,39 @@ def invoke_agent(
     try:
         # AgentExecutor.invoke expects input dict; some agents use "input", some "message"
         if hasattr(agent, "invoke"):
-            # Tool-calling / ReAct agent
             inp: dict[str, Any] = {"input": user_message.strip()}
             if history:
                 inp["chat_history"] = _messages_to_langchain(history)
             result = agent.invoke(inp)
-            output = result.get("output") or result.get("response") or result.get("output_response")
-            if output is not None:
-                if hasattr(output, "content"):
-                    return str(output.content or "").strip()
-                return str(output).strip()
-            if "messages" in result and result["messages"]:
-                last = result["messages"][-1]
-                if hasattr(last, "content") and last.content:
-                    return str(last.content).strip()
+            # Fallback chain returns a message or list; AgentExecutor returns a dict
+            if isinstance(result, dict):
+                output = result.get("output") or result.get("response") or result.get("output_response")
+                if output is not None:
+                    if hasattr(output, "content"):
+                        return str(output.content or "").strip()
+                    return str(output).strip()
+                if result.get("messages"):
+                    last = result["messages"][-1]
+                    if hasattr(last, "content") and last.content:
+                        return str(last.content).strip()
+                return str(result).strip()
+            # Fallback chain: result may be AIMessage or list of messages
+            if isinstance(result, list) and result:
+                result = result[-1]
+            if hasattr(result, "content"):
+                return str(result.content or "").strip()
             return str(result).strip()
         else:
-            # Fallback chain
             out = agent.invoke({"input": user_message.strip()})
             return (out.content if hasattr(out, "content") else str(out)).strip()
     except Exception as e:
-        logger.exception("Agent invocation failed")
-        msg = str(e).lower()
+        err_msg = str(e)
+        logger.exception("Agent invocation failed: %s", err_msg)
+        msg = err_msg.lower()
         if "timeout" in msg or "deadline" in msg:
             return "The request took too long. Please try a shorter question or try again later."
         if "rate" in msg or "quota" in msg or "429" in msg:
+            logger.warning("Agent rate/quota error (check Gemini, Tavily, or MCP): %s", err_msg)
             return "Service is temporarily busy. Please try again in a moment."
         return "Something went wrong while answering. Please try again."
 
@@ -285,3 +306,60 @@ async def invoke_agent_async(
         None,
         lambda: invoke_agent(user_message, chat_history),
     )
+
+
+async def stream_agent_async(
+    user_message: str,
+    chat_history: Optional[Sequence[dict[str, str]]] = None,
+):
+    """
+    Stream the agent reply token-by-token (when using fallback chain).
+    Yields text chunks. If using AgentExecutor, yields the full reply as one chunk.
+    """
+    agent = get_agent()
+    history = list(chat_history) if chat_history else []
+    inp: dict[str, Any] = {"input": (user_message or "").strip()}
+    if history:
+        inp["chat_history"] = _messages_to_langchain(history)
+
+    # Check if we have the fallback chain (no AgentExecutor)
+    try:
+        from langchain.agents import AgentExecutor
+        is_executor = isinstance(agent, AgentExecutor)
+    except ImportError:
+        is_executor = False
+
+    if is_executor:
+        # AgentExecutor: no token streaming, yield full reply
+        full = await invoke_agent_async(user_message, chat_history)
+        if full:
+            yield full
+        return
+
+    # Fallback: stream tokens from LLM (or full reply if astream not supported)
+    try:
+        stream_chain = _create_fallback_chain_streaming()
+        if hasattr(stream_chain, "astream"):
+            chunk_count = 0
+            async for chunk in stream_chain.astream(inp):
+                if hasattr(chunk, "content") and chunk.content:
+                    yield chunk.content
+                    chunk_count += 1
+                elif isinstance(chunk, str) and chunk:
+                    yield chunk
+                    chunk_count += 1
+            if chunk_count == 0:
+                full = await invoke_agent_async(user_message, chat_history)
+                if full:
+                    yield full
+        else:
+            full = await invoke_agent_async(user_message, chat_history)
+            if full:
+                yield full
+    except Exception as e:
+        logger.exception("Agent stream failed: %s", e)
+        msg = str(e).lower()
+        if "rate" in msg or "quota" in msg or "429" in msg:
+            yield "Service is temporarily busy. Please try again in a moment."
+        else:
+            yield "Something went wrong while answering. Please try again."

@@ -29,9 +29,13 @@ def signup_user(email: str, password: str) -> Tuple[Optional[dict], Optional[str
         # Existing email: Supabase returns user but no session
         if not getattr(response, "session", None):
             return None, "An account with this email already exists. Please sign in."
+        session = response.session
         return {
             "id": UUID(response.user.id),
             "email": response.user.email,
+            "access_token": session.access_token,
+            "refresh_token": session.refresh_token,
+            "expires_at": getattr(session, "expires_at", None),
         }, None
     except Exception as e:
         err = str(e).lower()

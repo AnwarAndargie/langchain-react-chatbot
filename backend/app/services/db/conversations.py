@@ -9,7 +9,7 @@ from app.services.db.supabase_client import get_supabase_client
 
 
 class Conversation:
-    """Conversation data model and operations"""
+    """Conversation data model and operations. Pass a user-scoped client for RLS."""
 
     def __init__(self, client: Optional[Client] = None):
         self.client = client or get_supabase_client()

@@ -44,9 +44,10 @@ class Settings(BaseSettings):
     mcp_auth_header: str = ""
 
     # JWT Configuration (default empty; required for auth)
+    # Access token is issued by Supabase. To set 2–3h expiry: Dashboard → Auth → Settings → JWT expiry (e.g. 7200 or 10800 seconds).
     jwt_secret: str = ""
     jwt_algorithm: str = "HS256"
-    jwt_expiration_hours: int = 24
+    jwt_expiration_hours: int = 24  # Used only if backend issues JWTs; Supabase token uses Dashboard setting
 
     # Agent Configuration
     agent_max_iterations: int = 10

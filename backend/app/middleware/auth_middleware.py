@@ -1,13 +1,11 @@
 """Authentication middleware for protecting routes"""
 
 from typing import Optional
-from uuid import UUID
 from fastapi import Request, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
-from app.utils.auth import get_user_id_from_token, get_email_from_token, verify_token
 from app.utils.supabase_auth import verify_supabase_token
 
 
@@ -41,18 +39,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 media_type="application/json"
             )
 
-        # Verify token
-        if not verify_token(token):
+        # Verify Supabase JWT so RLS can use auth.uid() for DB operations
+        user_data, error = verify_supabase_token(token)
+        if error or not user_data:
             return Response(
                 content='{"detail":"Invalid or expired token"}',
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 media_type="application/json"
             )
 
-        # Get user info from token
-        user_id = get_user_id_from_token(token)
-        email = get_email_from_token(token)
-
+        user_id = user_data.get("id")
+        email = user_data.get("email") or ""
         if not user_id:
             return Response(
                 content='{"detail":"Invalid token payload"}',
@@ -60,32 +57,22 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 media_type="application/json"
             )
 
-        # Verify token with Supabase (optional but recommended for extra security)
-        user_data, error = verify_supabase_token(token)
-        if error:
-            # If Supabase verification fails, still allow if our JWT is valid
-            # This provides flexibility but you may want to enforce Supabase verification
-            pass
-
-        # Inject user context into request state
+        # Inject user context into request state (token is Supabase access_token for RLS)
         request.state.user_id = user_id
-        request.state.email = email or ""
+        request.state.email = email
         request.state.token = token
 
         return await call_next(request)
 
     def _is_public_endpoint(self, path: str) -> bool:
-        """Check if endpoint is public (doesn't require authentication)"""
-        public_paths = [
-            "/",
-            "/health",
-            "/docs",
-            "/openapi.json",
-            "/redoc",
-            "/auth/login",
-            "/auth/register",
-        ]
-        return any(path.startswith(public) for public in public_paths)
+        """Check if endpoint is public (doesn't require authentication)."""
+        # Exact match only for root and auth (so "/" doesn't make every path public)
+        if path in ("/", "/openapi.json", "/auth/login", "/auth/register"):
+            return True
+        # Prefix match for docs and health
+        if path.startswith("/health") or path.startswith("/docs") or path.startswith("/redoc"):
+            return True
+        return False
 
 
 # Dependency for FastAPI routes to get current user
