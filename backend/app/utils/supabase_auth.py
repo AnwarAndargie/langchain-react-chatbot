@@ -14,16 +14,9 @@ class AuthRateLimitError(Exception):
 
 def signup_user(email: str, password: str) -> Tuple[Optional[dict], Optional[str]]:
     """
-    Register a new user with Supabase Auth
-    
-    Args:
-        email: User email address
-        password: User password
-        
-    Returns:
-        Tuple of (user_data, error_message)
-        - user_data: User dictionary if successful, None otherwise
-        - error_message: Error message if failed, None otherwise
+    Register a new user with Supabase Auth.
+    Supabase returns user + session for new signups; for an existing email
+    it returns user but session is None (to avoid email enumeration).
     """
     try:
         client = get_supabase_client()
@@ -31,21 +24,23 @@ def signup_user(email: str, password: str) -> Tuple[Optional[dict], Optional[str
             "email": email,
             "password": password,
         })
-        
-        if response.user:
-            return {
-                "id": UUID(response.user.id),
-                "email": response.user.email,
-            }, None
-        else:
+        if not response.user:
             return None, "Failed to create user"
-            
+        # Existing email: Supabase returns user but no session
+        if not getattr(response, "session", None):
+            return None, "An account with this email already exists. Please sign in."
+        return {
+            "id": UUID(response.user.id),
+            "email": response.user.email,
+        }, None
     except Exception as e:
         err = str(e).lower()
         if "rate limit" in err or "rate_limit" in err:
             raise AuthRateLimitError(
                 "Too many sign-up attempts. Please try again in an hour."
             ) from e
+        if "already registered" in err or "already exists" in err or "duplicate" in err:
+            return None, "An account with this email already exists. Please sign in."
         return None, str(e)
 
 

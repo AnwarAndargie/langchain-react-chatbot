@@ -13,6 +13,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { KeyRound, Mail, User } from "lucide-react"
+import { useAuth } from "@/state/AuthContext"
 
 const formSchema = z.object({
     fullName: z.string().min(2, {
@@ -31,6 +32,7 @@ const formSchema = z.object({
 })
 
 export function SignUpForm() {
+    const { register: registerUser, error, clearError } = useAuth()
     const form = useForm<z.infer<typeof formSchema>>({
         resolver: zodResolver(formSchema),
         defaultValues: {
@@ -41,9 +43,18 @@ export function SignUpForm() {
         },
     })
 
-    function onSubmit(values: z.infer<typeof formSchema>) {
-        // TODO: Handle sign up
-        console.log(values)
+    async function onSubmit(values: z.infer<typeof formSchema>) {
+        clearError()
+        try {
+            await registerUser({
+                email: values.email,
+                password: values.password,
+                full_name: values.fullName,
+            })
+            // AuthPage will redirect to /chat when isAuthenticated becomes true (avoids race with ProtectedRoute)
+        } catch {
+            // Error is set in context and shown below
+        }
     }
 
     return (
@@ -121,6 +132,9 @@ export function SignUpForm() {
                                 </FormItem>
                             )}
                         />
+                        {error && (
+                            <p className="text-sm text-destructive">{error}</p>
+                        )}
                         <Button type="submit" className="w-full">
                             Sign Up
                         </Button>

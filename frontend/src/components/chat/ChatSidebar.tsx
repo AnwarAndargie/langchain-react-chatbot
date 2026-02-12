@@ -1,14 +1,23 @@
+import { useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
 import {
     Clock,
     Layers,
     LayoutGrid,
-    MoreHorizontal,
+    LogOut,
     MessageSquare,
+    MoreHorizontal,
     Plus,
 } from "lucide-react"
+import { useAuth } from "@/state/AuthContext"
 
 /** Dummy chat history for sidebar. Replace with API/state later. */
 const DUMMY_CHAT_HISTORY: { id: string; title: string }[] = [
@@ -24,6 +33,14 @@ const DUMMY_CHAT_HISTORY: { id: string; title: string }[] = [
 interface ChatSidebarProps extends React.HTMLAttributes<HTMLDivElement> { }
 
 export function ChatSidebar({ className }: ChatSidebarProps) {
+    const { user, logout } = useAuth()
+    const navigate = useNavigate()
+
+    async function handleLogout() {
+        await logout()
+        navigate("/auth", { replace: true })
+    }
+
     return (
         <div
             className={cn(
@@ -99,15 +116,30 @@ export function ChatSidebar({ className }: ChatSidebarProps) {
                 </ScrollArea>
             </div>
 
-            {/* Bottom: upload, notifications, profile */}
+            {/* Bottom: profile with logout */}
             <div className="shrink-0 flex flex-col items-start gap-1 py-3 px-2 border-t border-border">
-                <button
-                    type="button"
-                    className="h-9 w-9 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-sm font-medium shrink-0 hover:opacity-90 transition-opacity"
-                    aria-label="Profile"
-                >
-                    A
-                </button>
+                <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                        <button
+                            type="button"
+                            className="h-9 w-9 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-sm font-medium shrink-0 hover:opacity-90 transition-opacity"
+                            aria-label="Profile"
+                        >
+                            {user?.email?.charAt(0).toUpperCase() ?? "A"}
+                        </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" side="top" className="w-56">
+                        {user?.email && (
+                            <div className="px-2 py-1.5 text-sm text-muted-foreground truncate">
+                                {user.email}
+                            </div>
+                        )}
+                        <DropdownMenuItem onClick={handleLogout} className="gap-2 cursor-pointer">
+                            <LogOut className="h-4 w-4" />
+                            Log out
+                        </DropdownMenuItem>
+                    </DropdownMenuContent>
+                </DropdownMenu>
             </div>
         </div>
     )

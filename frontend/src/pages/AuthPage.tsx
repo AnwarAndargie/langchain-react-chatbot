@@ -1,11 +1,36 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { useNavigate } from "react-router-dom"
 import { Card } from "@/components/ui/card"
 import { SignInForm } from "@/components/auth/SignInForm"
 import { SignUpForm } from "@/components/auth/SignUpForm"
+import { useAuth } from "@/state/AuthContext"
 
 export default function AuthPage() {
-    // "signin" or "signup"
+    const { isAuthenticated, isLoading } = useAuth()
+    const navigate = useNavigate()
     const [view, setView] = useState<"signin" | "signup">("signin")
+
+    // Redirect when auth state becomes true (after login/register or when already logged in)
+    useEffect(() => {
+        if (!isLoading && isAuthenticated) {
+            navigate("/chat", { replace: true })
+        }
+    }, [isLoading, isAuthenticated, navigate])
+
+    if (isLoading) {
+        return (
+            <div className="flex min-h-screen w-full items-center justify-center bg-background">
+                <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+            </div>
+        )
+    }
+    if (isAuthenticated) {
+        return (
+            <div className="flex min-h-screen w-full items-center justify-center bg-background">
+                <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+            </div>
+        )
+    }
 
     return (
         <div className="container relative min-h-screen flex flex-col items-center justify-center lg:max-w-none lg:px-0">
