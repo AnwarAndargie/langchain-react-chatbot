@@ -41,7 +41,10 @@ def custom_openapi():
 
 app.openapi = custom_openapi
 
-# CORS middleware (must be before auth middleware)
+# Authentication middleware (inner: runs after CORS)
+app.add_middleware(AuthMiddleware)
+
+# CORS middleware (outer: runs first so all responses get CORS headers, including 401)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
@@ -49,9 +52,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Authentication middleware (applies to all routes except public ones)
-app.add_middleware(AuthMiddleware)
 
 # Include routers
 app.include_router(health.router, prefix="/health", tags=["health"])

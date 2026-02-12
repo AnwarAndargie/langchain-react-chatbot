@@ -12,28 +12,26 @@ import {
     Clock,
     Layers,
     LayoutGrid,
+    Loader2,
     LogOut,
     MessageSquare,
     MoreHorizontal,
     Plus,
 } from "lucide-react"
 import { useAuth } from "@/state/AuthContext"
-
-/** Dummy chat history for sidebar. Replace with API/state later. */
-const DUMMY_CHAT_HISTORY: { id: string; title: string }[] = [
-    { id: "1", title: "Previous Chat 1" },
-    { id: "2", title: "Research on AI Agents" },
-    { id: "3", title: "React patterns" },
-    { id: "4", title: "LangChain tool usage" },
-    { id: "5", title: "FastAPI + React setup" },
-    { id: "6", title: "Summarize long documents" },
-    { id: "7", title: "Compare Next.js vs Remix" },
-]
+import { useChat } from "@/state/ChatContext"
 
 interface ChatSidebarProps extends React.HTMLAttributes<HTMLDivElement> { }
 
 export function ChatSidebar({ className }: ChatSidebarProps) {
     const { user, logout } = useAuth()
+    const {
+        conversations,
+        conversationsLoading,
+        activeConversationId,
+        startNewChat,
+        selectConversation,
+    } = useChat()
     const navigate = useNavigate()
 
     async function handleLogout() {
@@ -60,6 +58,7 @@ export function ChatSidebar({ className }: ChatSidebarProps) {
                     variant="default"
                     className="w-full h-10 rounded-lg gap-2 font-medium shadow-sm hover:shadow-md transition-shadow bg-secondary text-secondary-foreground hover:bg-secondary/90"
                     aria-label="New chat"
+                    onClick={startNewChat}
                 >
                     <Plus className="h-4 w-4 shrink-0" />
                     <span>New chat</span>
@@ -98,18 +97,37 @@ export function ChatSidebar({ className }: ChatSidebarProps) {
                 </Button>
             </nav>
 
-            {/* Scrollable chat history */}
+            {/* Scrollable chat history — real data from API */}
             <div className="flex-1 min-h-0 flex flex-col py-2">
                 <ScrollArea className="flex-1 px-2">
                     <div className="space-y-0.5 py-1">
-                        {DUMMY_CHAT_HISTORY.map((chat) => (
+                        {conversationsLoading && conversations.length === 0 && (
+                            <div className="flex items-center justify-center py-6 text-muted-foreground">
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                            </div>
+                        )}
+
+                        {!conversationsLoading && conversations.length === 0 && (
+                            <p className="px-3 py-6 text-center text-xs text-muted-foreground">
+                                No conversations yet
+                            </p>
+                        )}
+
+                        {conversations.map((conv) => (
                             <Button
-                                key={chat.id}
+                                key={conv.id}
                                 variant="ghost"
-                                className="w-full justify-start gap-3 rounded-md h-8 px-3 font-normal text-muted-foreground hover:text-foreground"
+                                onClick={() => selectConversation(conv.id)}
+                                className={cn(
+                                    "w-full justify-start gap-3 rounded-md h-8 px-3 font-normal text-muted-foreground hover:text-foreground",
+                                    activeConversationId === conv.id &&
+                                    "bg-muted text-foreground"
+                                )}
                             >
                                 <MessageSquare className="h-3.5 w-3.5 shrink-0" />
-                                <span className="truncate text-sm">{chat.title}</span>
+                                <span className="truncate text-sm">
+                                    {conv.title ?? "Untitled"}
+                                </span>
                             </Button>
                         ))}
                     </div>
@@ -143,4 +161,4 @@ export function ChatSidebar({ className }: ChatSidebarProps) {
             </div>
         </div>
     )
-} 
+}

@@ -1,18 +1,25 @@
+import { useCallback, useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { cn } from "@/lib/utils"
 import {
     ArrowUp,
-    ChevronDown,
+    Bot,
     FileText,
-    Mic,
+    Loader2,
     Newspaper,
-    Paperclip,
     Scale,
     Search,
+    Square,
     TrendingUp,
+    User,
 } from "lucide-react"
+import { useChat } from "@/state/ChatContext"
+import type { Message } from "@/types/chat"
 
-/** Suggested actions aligned with project tools: news, trends, web search. */
+/* ── Suggested prompts (shown on empty / new chat) ───────── */
+
 const SUGGESTED_PROMPTS = [
     { id: "news", label: "News", icon: Newspaper },
     { id: "trends", label: "Trends", icon: TrendingUp },
@@ -21,94 +28,250 @@ const SUGGESTED_PROMPTS = [
     { id: "compare", label: "Compare", icon: Scale },
 ] as const
 
+/* ── Single message bubble ───────────────────────────────── */
+
+interface MessageBubbleProps {
+    role: Message["role"]
+    content: string
+    isStreaming?: boolean
+}
+
+function MessageBubble({ role, content, isStreaming }: MessageBubbleProps) {
+    const isUser = role === "user"
+
+    return (
+        <div className={cn("flex gap-3 py-4", isUser ? "justify-end" : "justify-start")}>
+            {/* Avatar (assistant only) */}
+            {!isUser && (
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                    <Bot className="h-4 w-4" />
+                </div>
+            )}
+
+            <div
+                className={cn(
+                    "max-w-[75%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap break-words",
+                    isUser
+                        ? "bg-primary text-primary-foreground rounded-br-md"
+                        : "bg-muted text-foreground rounded-bl-md"
+                )}
+            >
+                {content}
+                {isStreaming && (
+                    <span className="ml-0.5 inline-block h-4 w-1 animate-pulse rounded-full bg-current align-text-bottom" />
+                )}
+            </div>
+
+            {/* Avatar (user only) */}
+            {isUser && (
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                    <User className="h-4 w-4" />
+                </div>
+            )}
+        </div>
+    )
+}
+
+/* ── Chat Area (main component) ──────────────────────────── */
+
 export function ChatArea() {
+    const {
+        activeConversationId,
+        messages,
+        messagesLoading,
+        isStreaming,
+        streamingContent,
+        error,
+        sendMessage,
+        stopStreaming,
+        clearError,
+    } = useChat()
+
+    const [input, setInput] = useState("")
+    const scrollRef = useRef<HTMLDivElement>(null)
+    const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+    const hasMessages = messages.length > 0 || isStreaming
+    const isEmptyChat = !activeConversationId && !hasMessages
+
+    /* ── Auto-scroll to bottom on new content ────────────── */
+
+    useEffect(() => {
+        if (scrollRef.current) {
+            scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+        }
+    }, [messages, streamingContent])
+
+    /* ── Send handler ────────────────────────────────────── */
+
+    const handleSend = useCallback(async () => {
+        const text = input.trim()
+        if (!text || isStreaming) return
+        setInput("")
+        await sendMessage(text)
+        textareaRef.current?.focus()
+    }, [input, isStreaming, sendMessage])
+
+    /* ── Keyboard: Enter to send, Shift+Enter for newline ── */
+
+    const handleKeyDown = useCallback(
+        (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault()
+                handleSend()
+            }
+        },
+        [handleSend],
+    )
+
+    /* ── Suggested prompt click ──────────────────────────── */
+
+    const handlePrompt = useCallback(
+        (label: string) => {
+            setInput(label)
+            textareaRef.current?.focus()
+        },
+        [],
+    )
+
+    /* ── Render ──────────────────────────────────────────── */
+
     return (
         <div className="relative flex h-full flex-col bg-background">
-            {/* Top banner - project idea: news, trends, search */}
+            {/* Top banner */}
             <div className="shrink-0 flex justify-center py-3 px-4">
                 <span className="inline-flex items-center gap-1.5 rounded-md bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
-                    News, trends & web search — powered by LangChain
+                    News, trends &amp; web search — powered by LangChain
                 </span>
             </div>
 
-            <div className="flex flex-1 flex-col items-center justify-center p-4 md:p-8">
-                <div className="flex w-full max-w-2xl flex-col items-center space-y-8">
-                    {/* Project title */}
-                    <h1 className="text-4xl font-semibold tracking-tighter text-center sm:text-5xl md:text-6xl text-foreground">
-                        Search, trends & more
-                    </h1>
-
-                    {/* Input area */}
-                    <div className="relative w-full rounded-xl border border-input bg-muted/30 shadow-sm focus-within:ring-1 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background">
-                        <Textarea
-                            placeholder="Search the web, check trends, or ask anything."
-                            className="min-h-[56px] w-full resize-none bg-transparent border-0 focus-visible:ring-0 focus-visible:ring-offset-0 px-4 py-3.5 text-base placeholder:text-muted-foreground"
-                        />
-                        <div className="flex items-center justify-between gap-2 px-3 pb-2.5 pt-0">
-                            <div className="flex items-center gap-1">
-                                <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground shrink-0"
-                                    aria-label="Attach file"
-                                >
-                                    <Paperclip className="h-4 w-4" />
-                                </Button>
-                            </div>
-                            <div className="flex items-center gap-1">
-                                <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="h-8 gap-1 rounded-md px-2 text-muted-foreground hover:text-foreground text-xs font-medium"
-                                >
-                                    Model
-                                    <ChevronDown className="h-3.5 w-3.5" />
-                                </Button>
-                                <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground shrink-0"
-                                    aria-label="Voice input"
-                                >
-                                    <Mic className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                    size="icon"
-                                    className="h-8 w-8 rounded-full shrink-0"
-                                    aria-label="Send"
-                                >
-                                    <ArrowUp className="h-4 w-4" />
-                                </Button>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Suggested prompts - project idea: news, trends, search */}
-                    <div className="flex flex-wrap items-center justify-center gap-2">
-                        {SUGGESTED_PROMPTS.map(({ id, label, icon: Icon }) => (
-                            <Button
-                                key={id}
-                                variant="outline"
-                                size="sm"
-                                className="h-9 rounded-lg border-border bg-background/80 px-3 gap-2 hover:bg-muted/50"
-                            >
-                                <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                {label}
-                            </Button>
-                        ))}
+            {/* Error toast */}
+            {error && (
+                <div className="mx-auto w-full max-w-2xl px-4">
+                    <div className="flex items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive">
+                        <span>{error}</span>
+                        <button
+                            onClick={clearError}
+                            className="shrink-0 text-xs font-medium underline underline-offset-2"
+                        >
+                            Dismiss
+                        </button>
                     </div>
                 </div>
-            </div>
+            )}
 
-            {/* Bottom-right utility icons */}
-            <div className="absolute bottom-4 right-4 flex items-center gap-2 text-muted-foreground">
-                <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Settings">
-                    <span className="text-xs font-medium">A</span>
-                </Button>
-                <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Help">
-                    ?
-                </Button>
-            </div>
+            {/* ── Empty state (new chat) ─────────────────── */}
+            {isEmptyChat && !messagesLoading && (
+                <div className="flex flex-1 flex-col items-center justify-center p-4 md:p-8">
+                    <div className="flex w-full max-w-2xl flex-col items-center space-y-8">
+                        <h1 className="text-4xl font-semibold tracking-tighter text-center sm:text-5xl md:text-6xl text-foreground">
+                            Search, trends &amp; more
+                        </h1>
+
+                        {/* Input */}
+                        {renderInput()}
+
+                        {/* Suggested prompts */}
+                        <div className="flex flex-wrap items-center justify-center gap-2">
+                            {SUGGESTED_PROMPTS.map(({ id, label, icon: Icon }) => (
+                                <Button
+                                    key={id}
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handlePrompt(label)}
+                                    className="h-9 rounded-lg border-border bg-background/80 px-3 gap-2 hover:bg-muted/50"
+                                >
+                                    <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                    {label}
+                                </Button>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Messages view ──────────────────────────── */}
+            {(hasMessages || messagesLoading) && (
+                <>
+                    <ScrollArea className="flex-1 min-h-0">
+                        <div
+                            ref={scrollRef}
+                            className="mx-auto w-full max-w-2xl px-4 py-4"
+                        >
+                            {messagesLoading && messages.length === 0 && (
+                                <div className="flex items-center justify-center py-12 text-muted-foreground">
+                                    <Loader2 className="h-5 w-5 animate-spin" />
+                                </div>
+                            )}
+
+                            {messages.map((msg) => (
+                                <MessageBubble
+                                    key={msg.id}
+                                    role={msg.role}
+                                    content={msg.content}
+                                />
+                            ))}
+
+                            {/* Streaming assistant bubble */}
+                            {isStreaming && (
+                                <MessageBubble
+                                    role="assistant"
+                                    content={streamingContent}
+                                    isStreaming
+                                />
+                            )}
+                        </div>
+                    </ScrollArea>
+
+                    {/* Input pinned at the bottom */}
+                    <div className="shrink-0 border-t border-border bg-background/80 backdrop-blur-sm px-4 py-3">
+                        <div className="mx-auto w-full max-w-2xl">
+                            {renderInput()}
+                        </div>
+                    </div>
+                </>
+            )}
         </div>
     )
+
+    /* ── Shared input widget ─────────────────────────────── */
+
+    function renderInput() {
+        return (
+            <div className="relative w-full rounded-xl border border-input bg-muted/30 shadow-sm focus-within:ring-1 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background">
+                <Textarea
+                    ref={textareaRef}
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="Search the web, check trends, or ask anything."
+                    className="min-h-[56px] max-h-[200px] w-full resize-none bg-transparent border-0 focus-visible:ring-0 focus-visible:ring-offset-0 px-4 py-3.5 text-base placeholder:text-muted-foreground"
+                    disabled={isStreaming}
+                />
+                <div className="flex items-center justify-end gap-1 px-3 pb-2.5 pt-0">
+                    {isStreaming ? (
+                        <Button
+                            size="icon"
+                            variant="destructive"
+                            className="h-8 w-8 rounded-full shrink-0"
+                            aria-label="Stop generating"
+                            onClick={stopStreaming}
+                        >
+                            <Square className="h-3.5 w-3.5" />
+                        </Button>
+                    ) : (
+                        <Button
+                            size="icon"
+                            className="h-8 w-8 rounded-full shrink-0"
+                            aria-label="Send"
+                            disabled={!input.trim()}
+                            onClick={handleSend}
+                        >
+                            <ArrowUp className="h-4 w-4" />
+                        </Button>
+                    )}
+                </div>
+            </div>
+        )
+    }
 }

@@ -120,8 +120,8 @@ def _build_tools() -> List[Any]:
     return tools
 
 
-def _get_llm():
-    """Return ChatGoogleGenerativeAI instance from settings."""
+def _get_llm(streaming: bool = False):
+    """Return ChatGoogleGenerativeAI instance from settings. Use streaming=True for token-level stream."""
     from langchain_google_genai import ChatGoogleGenerativeAI
 
     return ChatGoogleGenerativeAI(
@@ -129,6 +129,7 @@ def _get_llm():
         google_api_key=settings.gemini_api_key or "dummy",
         temperature=0.2,
         max_output_tokens=2048,
+        streaming=streaming,
     )
 
 
@@ -189,10 +190,10 @@ def _create_fallback_chain():
 
 
 def _create_fallback_chain_streaming():
-    """Same as fallback but without final lambda so we can stream LLM tokens."""
+    """Same as fallback but with streaming LLM so we can stream tokens via .stream()."""
     from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
-    llm = _get_llm()
+    llm = _get_llm(streaming=True)
     prompt = ChatPromptTemplate.from_messages([
         ("system", "You are a helpful assistant. Answer the user concisely. Use the conversation history for context when the user refers to earlier messages."),
         MessagesPlaceholder(variable_name="chat_history", optional=True),
@@ -336,26 +337,45 @@ async def stream_agent_async(
             yield full
         return
 
-    # Fallback: stream tokens from LLM (or full reply if astream not supported)
-    try:
-        stream_chain = _create_fallback_chain_streaming()
-        if hasattr(stream_chain, "astream"):
-            chunk_count = 0
-            async for chunk in stream_chain.astream(inp):
+    # Fallback: Gemini supports sync .stream() only; run in thread and yield tokens via queue
+    import asyncio
+    import queue
+    import threading
+
+    stream_chain = _create_fallback_chain_streaming()
+    if not hasattr(stream_chain, "stream"):
+        full = await invoke_agent_async(user_message, chat_history)
+        if full:
+            yield full
+        return
+
+    chunk_queue = queue.Queue()
+    stream_error = []
+
+    def run_sync_stream():
+        try:
+            for chunk in stream_chain.stream(inp):
                 if hasattr(chunk, "content") and chunk.content:
-                    yield chunk.content
-                    chunk_count += 1
+                    chunk_queue.put(str(chunk.content))
                 elif isinstance(chunk, str) and chunk:
-                    yield chunk
-                    chunk_count += 1
-            if chunk_count == 0:
-                full = await invoke_agent_async(user_message, chat_history)
-                if full:
-                    yield full
-        else:
-            full = await invoke_agent_async(user_message, chat_history)
-            if full:
-                yield full
+                    chunk_queue.put(chunk)
+        except Exception as e:
+            stream_error.append(e)
+        finally:
+            chunk_queue.put(None)  # sentinel
+
+    loop = asyncio.get_event_loop()
+    thread = threading.Thread(target=run_sync_stream)
+    thread.start()
+
+    try:
+        while True:
+            chunk = await loop.run_in_executor(None, chunk_queue.get)
+            if chunk is None:
+                break
+            if stream_error:
+                raise stream_error[0]
+            yield chunk
     except Exception as e:
         logger.exception("Agent stream failed: %s", e)
         msg = str(e).lower()
@@ -363,3 +383,5 @@ async def stream_agent_async(
             yield "Service is temporarily busy. Please try again in a moment."
         else:
             yield "Something went wrong while answering. Please try again."
+    finally:
+        thread.join(timeout=1.0)

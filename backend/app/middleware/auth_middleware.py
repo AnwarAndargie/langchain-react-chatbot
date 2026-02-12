@@ -13,6 +13,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
     """Middleware to validate JWT tokens and inject user context"""
 
     async def dispatch(self, request: Request, call_next):
+        # Let OPTIONS (CORS preflight) through so CORS middleware can add headers
+        if request.method == "OPTIONS":
+            return await call_next(request)
         # Skip auth for public endpoints
         if self._is_public_endpoint(request.url.path):
             return await call_next(request)
