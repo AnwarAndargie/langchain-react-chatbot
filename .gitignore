@@ -1,6 +1,9 @@
 # Node modules
 node_modules/
 
+# Build output
+frontend/dist/
+
 # Python cache
 __pycache__/
 *.py[cod]
@@ -9,6 +12,9 @@ __pycache__/
 *.dockerignore
 Dockerfile
 
-# Environment variables
+# Environment variables (keep .env.example for setup instructions)
 .env
 .env.*
+!.env.example
+!backend/.env.example
+!frontend/.env.example
