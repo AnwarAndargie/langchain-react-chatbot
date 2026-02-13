@@ -60,6 +60,9 @@ export async function apiRequest<T>(path: string, config: RequestConfig = {}): P
   }
   const res = await fetch(url, { ...init, headers });
   if (!res.ok) {
+    if (res.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new Event("auth:unauthorized"));
+    }
     const body = await res.text();
     let message = body;
     try {
