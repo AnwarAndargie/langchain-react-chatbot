@@ -177,10 +177,14 @@ async def send_message_stream(
 
     full_content_parts: list[str] = []
     try:
-        async for chunk in stream_agent_async(content, history):
-            if chunk:
-                full_content_parts.append(chunk)
-                yield {"type": "chunk", "content": chunk}
+        async for event in stream_agent_async(content, history):
+            if event["type"] == "token":
+                text = event["content"]
+                if text:
+                    full_content_parts.append(text)
+                    yield {"type": "chunk", "content": text}
+            elif event["type"] == "tool_start":
+                yield {"type": "tool_start", "tool": event["tool"]}
     except Exception as e:
         logger.exception("Stream failed: %s", e)
         full_content_parts = ["Something went wrong while answering. Please try again."]

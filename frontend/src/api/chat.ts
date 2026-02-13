@@ -45,6 +45,7 @@ export async function streamMessage(
     onChunk: (content: string) => void,
     onDone: (event: Extract<StreamEvent, { type: "done" }>) => void,
     onError: (detail: string) => void,
+    onToolStart?: (tool: string) => void,
     signal?: AbortSignal,
 ): Promise<void> {
     const url = getApiUrl("/chat/message/stream");
@@ -98,6 +99,9 @@ export async function streamMessage(
             const { done, value } = await reader.read();
             if (done) break;
 
+            // Artificial delay to make streaming smoother/visible
+            await new Promise((resolve) => setTimeout(resolve, 15));
+
             buffer += decoder.decode(value, { stream: true });
             const parts = buffer.split("\n\n");
             buffer = parts.pop() ?? "";
@@ -116,6 +120,9 @@ export async function streamMessage(
                 switch (event.type) {
                     case "chunk":
                         onChunk(event.content);
+                        break;
+                    case "tool_start":
+                        onToolStart?.(event.tool);
                         break;
                     case "done":
                         onDone(event);

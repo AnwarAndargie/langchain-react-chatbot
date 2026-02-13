@@ -44,6 +44,12 @@ const router = createBrowserRouter([
                         <ChatPage />
                     </ProtectedRoute>
                 ),
+                children: [
+                    {
+                        path: ":conversationId",
+                        element: null, // ChatPage handles the param
+                    },
+                ],
             },
             {
                 path: "*",

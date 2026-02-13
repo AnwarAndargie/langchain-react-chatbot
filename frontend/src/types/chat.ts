@@ -57,7 +57,12 @@ export interface StreamErrorEvent {
     detail: string;
 }
 
-export type StreamEvent = StreamChunkEvent | StreamDoneEvent | StreamErrorEvent;
+export interface StreamToolStartEvent {
+    type: "tool_start";
+    tool: string;
+}
+
+export type StreamEvent = StreamChunkEvent | StreamDoneEvent | StreamErrorEvent | StreamToolStartEvent;
 
 /* ── Pagination params ───────────────────────────────────── */
 

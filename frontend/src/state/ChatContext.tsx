@@ -25,6 +25,7 @@ import {
 } from "@/api/chat";
 import type { Conversation, Message } from "@/types/chat";
 import { useAuth } from "@/state/AuthContext";
+import { useNavigate, useParams } from "react-router-dom";
 
 /* ── Context shape ───────────────────────────────────────── */
 
@@ -43,6 +44,8 @@ interface ChatContextValue {
     isStreaming: boolean;
     /** The in-progress assistant text while streaming. */
     streamingContent: string;
+    /** Current tool activity status (e.g. "Searching web..."), or null. */
+    toolStatus: string | null;
     /** Error from the last operation. */
     error: string | null;
     /** Start a brand-new conversation (clears active). */
@@ -65,6 +68,8 @@ const ChatContext = createContext<ChatContextValue | null>(null);
 
 export function ChatProvider({ children }: { children: ReactNode }) {
     const { isAuthenticated } = useAuth();
+    const navigate = useNavigate();
+    const { conversationId: urlConversationId } = useParams();
 
     /* Conversation list */
     const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -78,11 +83,26 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     /* Streaming state */
     const [isStreaming, setIsStreaming] = useState(false);
     const [streamingContent, setStreamingContent] = useState("");
+    const [toolStatus, setToolStatus] = useState<string | null>(null);
     const abortRef = useRef<AbortController | null>(null);
 
     /* Errors */
     const [error, setError] = useState<string | null>(null);
     const clearError = useCallback(() => setError(null), []);
+
+    /* ── Sync URL with active conversation ─────────────────── */
+
+    // When URL params change, update state
+    useEffect(() => {
+        if (urlConversationId && urlConversationId !== activeConversationId) {
+            // Only switch if different (and validated by auth/list, but we trust URL for now)
+            setActiveConversationId(urlConversationId);
+        } else if (!urlConversationId && activeConversationId) {
+            // URL cleared -> clear active
+            setActiveConversationId(null);
+            setMessages([]);
+        }
+    }, [urlConversationId, activeConversationId]);
 
     /* ── Refresh conversation list ─────────────────────────── */
 
@@ -114,6 +134,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     useEffect(() => {
         if (!activeConversationId) {
             setMessages([]);
+            setMessagesLoading(false);
             return;
         }
 
@@ -143,9 +164,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         setActiveConversationId(null);
         setMessages([]);
         setStreamingContent("");
+        setToolStatus(null);
         setIsStreaming(false);
         setError(null);
-    }, []);
+        navigate("/chat");
+    }, [navigate]);
 
     /* ── Select existing conversation ──────────────────────── */
 
@@ -153,14 +176,16 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         if (id === activeConversationId) return;
         abortRef.current?.abort();
         setStreamingContent("");
+        setToolStatus(null);
         setIsStreaming(false);
         setError(null);
-        setActiveConversationId(id);
-    }, [activeConversationId]);
+        navigate(`/chat/${id}`);
+    }, [activeConversationId, navigate]);
 
     const stopStreaming = useCallback(() => {
         abortRef.current?.abort();
         setStreamingContent("");
+        setToolStatus(null);
         setIsStreaming(false);
     }, []);
 
@@ -185,6 +210,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         // Start streaming
         setIsStreaming(true);
         setStreamingContent("");
+        setToolStatus(null);
 
         const controller = new AbortController();
         abortRef.current = controller;
@@ -197,12 +223,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             /* onChunk */
             (content) => {
                 setStreamingContent((prev) => prev + content);
+                setToolStatus(null);
             },
             /* onDone */
             (event) => {
-                // If this was a new conversation, set the active ID
+                // If new conversation, update URL
                 if (!activeConversationId) {
-                    setActiveConversationId(event.conversation_id);
+                    navigate(`/chat/${event.conversation_id}`, { replace: true });
                 }
 
                 // Replace optimistic user msg ID & append the final assistant message
@@ -216,6 +243,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                 });
 
                 setStreamingContent("");
+                setToolStatus(null);
                 setIsStreaming(false);
 
                 // Refresh sidebar so the new/updated conversation shows
@@ -226,10 +254,22 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                 setError(detail);
                 setIsStreaming(false);
                 setStreamingContent("");
+                setToolStatus(null);
+            },
+            /* onToolStart */
+            (tool) => {
+                let status = `Using ${tool}...`;
+                const lower = tool.toLowerCase();
+                if (lower.includes("tavily") || lower.includes("search")) {
+                    status = "Searching web...";
+                } else if (lower.includes("trend")) {
+                    status = "Checking trends...";
+                }
+                setToolStatus(status);
             },
             controller.signal,
         );
-    }, [activeConversationId, refreshConversations]);
+    }, [activeConversationId, navigate, refreshConversations]);
 
     /* ── Memoised context value ────────────────────────────── */
 
@@ -241,6 +281,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         messagesLoading,
         isStreaming,
         streamingContent,
+        toolStatus,
         error,
         startNewChat,
         selectConversation,
@@ -256,6 +297,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         messagesLoading,
         isStreaming,
         streamingContent,
+        toolStatus,
         error,
         startNewChat,
         selectConversation,

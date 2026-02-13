@@ -81,6 +81,7 @@ export function ChatArea() {
         messagesLoading,
         isStreaming,
         streamingContent,
+        toolStatus,
         error,
         sendMessage,
         stopStreaming,
@@ -100,7 +101,7 @@ export function ChatArea() {
         if (scrollRef.current) {
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight
         }
-    }, [messages, streamingContent])
+    }, [messages, streamingContent, toolStatus])
 
     /* ── Send handler ────────────────────────────────────── */
 
@@ -212,8 +213,21 @@ export function ChatArea() {
                                 />
                             ))}
 
+                            {/* Tool status indicator */}
+                            {isStreaming && toolStatus && (
+                                <div className="flex justify-start gap-4 py-2 opacity-80">
+                                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                                        <Bot className="h-4 w-4" />
+                                    </div>
+                                    <div className="flex items-center gap-2 text-sm text-muted-foreground animate-pulse bg-muted/50 px-3 py-1.5 rounded-full">
+                                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                        <span>{toolStatus}</span>
+                                    </div>
+                                </div>
+                            )}
+
                             {/* Streaming assistant bubble */}
-                            {isStreaming && (
+                            {isStreaming && streamingContent && (
                                 <MessageBubble
                                     role="assistant"
                                     content={streamingContent}
