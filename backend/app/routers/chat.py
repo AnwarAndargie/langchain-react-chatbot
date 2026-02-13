@@ -1,10 +1,14 @@
 """Chat router: send message, list conversations, get messages."""
 
 import json
+import logging
 from uuid import UUID
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
+
+logger = logging.getLogger(__name__)
 
 from app.middleware import get_current_user
 from app.schemas.chat import (
@@ -22,12 +26,17 @@ router = APIRouter()
 
 def _message_to_response(msg: dict) -> MessageResponse:
     """Map DB message dict to MessageResponse (handles snake_case from Supabase)."""
+    metadata = msg.get("metadata") or {}
+    tools_used = metadata.get("tools_used") if isinstance(metadata, dict) else None
+    if tools_used is not None and not isinstance(tools_used, list):
+        tools_used = None
     return MessageResponse(
         id=msg["id"],
         conversation_id=msg["conversation_id"],
         role=msg["role"],
         content=msg["content"],
         timestamp=msg["timestamp"],
+        tools_used=tools_used,
     )
 
 
@@ -155,12 +164,19 @@ async def list_conversations(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    conversations = chat_service.list_conversations(
-        user_id=user["user_id"],
-        limit=limit,
-        offset=offset,
-        access_token=access_token,
-    )
+    try:
+        conversations = chat_service.list_conversations(
+            user_id=user["user_id"],
+            limit=limit,
+            offset=offset,
+            access_token=access_token,
+        )
+    except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ConnectTimeout) as e:
+        logger.warning("Supabase connection error in list_conversations: %s", str(e)[:200])
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database connection was lost. Please try again.",
+        ) from e
     return ConversationListResponse(
         conversations=[_conversation_to_response(c) for c in conversations],
     )
@@ -193,13 +209,20 @@ async def get_messages(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    conv, messages = chat_service.get_messages(
-        conversation_id=conversation_id,
-        user_id=user["user_id"],
-        limit=limit,
-        offset=offset,
-        access_token=access_token,
-    )
+    try:
+        conv, messages = chat_service.get_messages(
+            conversation_id=conversation_id,
+            user_id=user["user_id"],
+            limit=limit,
+            offset=offset,
+            access_token=access_token,
+        )
+    except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ConnectTimeout) as e:
+        logger.warning("Supabase connection error in get_messages: %s", str(e)[:200])
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database connection was lost. Please try again.",
+        ) from e
     if conv is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

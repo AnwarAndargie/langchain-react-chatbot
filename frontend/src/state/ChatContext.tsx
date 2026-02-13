@@ -85,6 +85,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     const [streamingContent, setStreamingContent] = useState("");
     const [toolStatus, setToolStatus] = useState<string | null>(null);
     const abortRef = useRef<AbortController | null>(null);
+    const toolsUsedInStreamRef = useRef<string[]>([]);
+    const summarizingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const hasShownSummarizingRef = useRef(false);
 
     /* Errors */
     const [error, setError] = useState<string | null>(null);
@@ -144,7 +147,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             setMessagesLoading(true);
             try {
                 const data = await apiGetMessages(activeConversationId!);
-                if (!cancelled) setMessages(data.messages);
+                if (!cancelled) {
+                    const normalized = data.messages.map((m) => ({
+                        ...m,
+                        toolsUsed: (m as Message & { tools_used?: string[] }).tools_used ?? m.toolsUsed,
+                    }));
+                    setMessages(normalized);
+                }
             } catch (err) {
                 if (!cancelled) setError((err as Error).message || "Failed to load messages");
             } finally {
@@ -211,6 +220,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         setIsStreaming(true);
         setStreamingContent("");
         setToolStatus(null);
+        toolsUsedInStreamRef.current = [];
+        hasShownSummarizingRef.current = false;
+        if (summarizingTimeoutRef.current) {
+            clearTimeout(summarizingTimeoutRef.current);
+            summarizingTimeoutRef.current = null;
+        }
 
         const controller = new AbortController();
         abortRef.current = controller;
@@ -222,35 +237,66 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             },
             /* onChunk */
             (content) => {
+                // First token after a tool: show "Summarizing…" then clear after a short delay
+                if (
+                    content &&
+                    toolsUsedInStreamRef.current.length > 0 &&
+                    !hasShownSummarizingRef.current
+                ) {
+                    hasShownSummarizingRef.current = true;
+                    setToolStatus("Summarizing…");
+                    if (summarizingTimeoutRef.current) clearTimeout(summarizingTimeoutRef.current);
+                    summarizingTimeoutRef.current = setTimeout(() => {
+                        setToolStatus(null);
+                        summarizingTimeoutRef.current = null;
+                    }, 1400);
+                }
                 setStreamingContent((prev) => prev + content);
-                setToolStatus(null);
             },
             /* onDone */
             (event) => {
+                if (summarizingTimeoutRef.current) {
+                    clearTimeout(summarizingTimeoutRef.current);
+                    summarizingTimeoutRef.current = null;
+                }
+                setToolStatus(null);
+
                 // If new conversation, update URL
                 if (!activeConversationId) {
                     navigate(`/chat/${event.conversation_id}`, { replace: true });
                 }
 
-                // Replace optimistic user msg ID & append the final assistant message
+                const fromBackend = (event.message as Message & { metadata?: { tools_used?: string[] } }).metadata?.tools_used;
+                const toolsUsed = fromBackend?.length
+                    ? fromBackend
+                    : toolsUsedInStreamRef.current.length
+                        ? [...toolsUsedInStreamRef.current]
+                        : undefined;
+                const assistantMessage: Message = {
+                    ...event.message,
+                    ...(toolsUsed && toolsUsed.length > 0 && { toolsUsed }),
+                };
+
                 setMessages((prev) => {
                     const updated = prev.map((m) =>
                         m.id === optimisticUserMsg.id
                             ? { ...m, id: m.id, conversation_id: event.conversation_id }
                             : m
                     );
-                    return [...updated, event.message];
+                    return [...updated, assistantMessage];
                 });
 
                 setStreamingContent("");
-                setToolStatus(null);
                 setIsStreaming(false);
 
-                // Refresh sidebar so the new/updated conversation shows
                 refreshConversations();
             },
             /* onError */
             (detail) => {
+                if (summarizingTimeoutRef.current) {
+                    clearTimeout(summarizingTimeoutRef.current);
+                    summarizingTimeoutRef.current = null;
+                }
                 setError(detail);
                 setIsStreaming(false);
                 setStreamingContent("");
@@ -258,12 +304,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             },
             /* onToolStart */
             (tool) => {
+                toolsUsedInStreamRef.current.push(tool);
                 let status = `Using ${tool}...`;
                 const lower = tool.toLowerCase();
                 if (lower.includes("tavily") || lower.includes("search")) {
-                    status = "Searching web...";
+                    status = "Searching web…";
                 } else if (lower.includes("trend")) {
-                    status = "Checking trends...";
+                    status = "Checking trends…";
                 }
                 setToolStatus(status);
             },

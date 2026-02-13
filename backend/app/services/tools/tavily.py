@@ -83,6 +83,30 @@ class TavilySearchError(Exception):
         super().__init__(message)
 
 
+def _debug_log(payload: dict) -> None:
+    import json as _json
+    import os
+    _paths = ["/app/.cursor/debug.log", os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", ".cursor", "debug.log")]
+    _path = os.environ.get("DEBUG_LOG_PATH", _paths[0])
+    if _path == _paths[0]:
+        for _p in _paths:
+            try:
+                _d = os.path.dirname(_p)
+                if _d and not os.path.isdir(_d):
+                    os.makedirs(_d, exist_ok=True)
+                with open(_p, "a") as f:
+                    f.write(_json.dumps({**payload, "timestamp": __import__("time").time() * 1000}) + "\n")
+                return
+            except Exception:
+                continue
+    else:
+        try:
+            with open(_path, "a") as f:
+                f.write(_json.dumps({**payload, "timestamp": __import__("time").time() * 1000}) + "\n")
+        except Exception:
+            pass
+
+
 def search_tavily(
     query: str,
     *,
@@ -106,11 +130,17 @@ def search_tavily(
             - answer: Optional Tavily-generated answer if requested.
             - error: None on success, or an error message string on failure.
     """
+    # #region agent log
+    _debug_log({"location": "tavily.py:search_tavily:entry", "message": "Tavily search_tavily entry", "data": {"query_preview": (query or "")[:80], "has_api_key": bool((settings.tavily_api_key or "").strip())}, "hypothesisId": "H_tavily_entry"})
+    # #endregion
     if not query or not str(query).strip():
         return _build_error_payload(query or "", "Search query cannot be empty.")
 
     api_key = (settings.tavily_api_key or "").strip()
     if not api_key:
+        # #region agent log
+        _debug_log({"location": "tavily.py:search_tavily:no_key", "message": "Tavily early return: no API key", "data": {}, "hypothesisId": "H_tavily_no_key"})
+        # #endregion
         logger.warning("Tavily search called without TAVILY_API_KEY configured")
         return _build_error_payload(
             query,
@@ -123,6 +153,9 @@ def search_tavily(
     try:
         from tavily import TavilyClient
     except ImportError as e:
+        # #region agent log
+        _debug_log({"location": "tavily.py:search_tavily:import_err", "message": "Tavily ImportError", "data": {"exc_type": type(e).__name__, "exc_msg": str(e)[:300]}, "hypothesisId": "H_tavily_import"})
+        # #endregion
         logger.exception("Tavily SDK not available")
         return _build_error_payload(
             query,
@@ -130,8 +163,16 @@ def search_tavily(
         )
 
     _depth = search_depth if search_depth in ("basic", "advanced", "fast", "ultra-fast") else "basic"
+    proxies: Optional[dict[str, str]] = None
+    http_proxy = (settings.tavily_http_proxy or "").strip()
+    https_proxy = (settings.tavily_https_proxy or "").strip()
+    if http_proxy or https_proxy:
+        proxies = {"http": http_proxy or https_proxy, "https": https_proxy or http_proxy}
     try:
-        client = TavilyClient(api_key=api_key)
+        # #region agent log
+        _debug_log({"location": "tavily.py:search_tavily:before_search", "message": "Tavily about to call client.search()", "data": {"query_preview": str(query).strip()[:80]}, "hypothesisId": "H_tavily_before_search"})
+        # #endregion
+        client = TavilyClient(api_key=api_key, proxies=proxies) if proxies else TavilyClient(api_key=api_key)
         raw = client.search(
             query=str(query).strip(),
             max_results=min(max(1, max_results), 20),
@@ -139,10 +180,14 @@ def search_tavily(
             include_answer=include_answer,
         )
     except Exception as e:
+        # #region agent log
+        _debug_log({"location": "tavily.py:search_tavily:exception", "message": "Tavily exception in client/search", "data": {"exc_type": type(e).__name__, "exc_msg": str(e)[:300]}, "hypothesisId": "H_tavily_exception"})
+        # #endregion
         msg = str(e).strip()
-        if "api_key" in msg.lower() or "auth" in msg.lower() or "401" in msg:
-            logger.warning("Tavily API authentication failed")
-            user_message = "Web search authentication failed. Check TAVILY_API_KEY."
+        exc_name = type(e).__name__
+        if exc_name == "ForbiddenError" or "403" in msg or "forbidden" in msg.lower() or "api_key" in msg.lower() or "auth" in msg.lower() or "401" in msg:
+            logger.warning("Tavily API 403/Forbidden or auth failed: %s", exc_name)
+            user_message = "Web search access denied (403). Check TAVILY_API_KEY and Tavily account access."
         elif "timeout" in msg.lower() or "timed out" in msg.lower():
             logger.warning("Tavily request timed out: %s", msg[:200])
             user_message = "Web search timed out. Please try again."

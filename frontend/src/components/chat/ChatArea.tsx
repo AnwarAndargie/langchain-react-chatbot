@@ -7,6 +7,7 @@ import {
     ArrowUp,
     Bot,
     FileText,
+    Info,
     Loader2,
     Newspaper,
     Scale,
@@ -15,6 +16,11 @@ import {
     TrendingUp,
     User,
 } from "lucide-react"
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipTrigger,
+} from "@/components/ui/tooltip"
 import ReactMarkdown from "react-markdown"
 import { useChat } from "@/state/ChatContext"
 import type { Message } from "@/types/chat"
@@ -31,10 +37,19 @@ const SUGGESTED_PROMPTS = [
 
 /* ── Single message bubble ───────────────────────────────── */
 
+/** Friendly label for a tool name (for display in Sources). */
+function toolDisplayName(tool: string): string {
+    const lower = tool.toLowerCase()
+    if (lower.includes("tavily") || lower.includes("web_search")) return "Web search"
+    if (lower.includes("trend")) return "Google Trends"
+    return tool.replace(/_/g, " ")
+}
+
 interface MessageBubbleProps {
     role: Message["role"]
     content: string
     isStreaming?: boolean
+    toolsUsed?: string[]
 }
 
 /* Markdown styling for assistant messages */
@@ -66,8 +81,9 @@ const markdownComponents = {
     ),
 }
 
-function MessageBubble({ role, content, isStreaming }: MessageBubbleProps) {
+function MessageBubble({ role, content, isStreaming, toolsUsed }: MessageBubbleProps) {
     const isUser = role === "user"
+    const showSources = !isUser && toolsUsed && toolsUsed.length > 0
 
     return (
         <div className={cn("flex gap-3 py-4", isUser ? "justify-end" : "justify-start")}>
@@ -78,21 +94,45 @@ function MessageBubble({ role, content, isStreaming }: MessageBubbleProps) {
                 </div>
             )}
 
-            <div
-                className={cn(
-                    "min-w-0 max-w-[75%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed overflow-hidden",
-                    isUser
-                        ? "bg-primary text-primary-foreground rounded-br-md whitespace-pre-wrap wrap-break-word"
-                        : "bg-muted text-foreground rounded-bl-md wrap-break-word [&_p]:mb-2 [&_p:last-child]:mb-0 [&_pre]:max-w-full"
-                )}
-            >
-                {isUser ? (
-                    content
-                ) : (
-                    <ReactMarkdown components={markdownComponents}>{content}</ReactMarkdown>
-                )}
-                {isStreaming && (
-                    <span className="ml-0.5 inline-block h-4 w-1 animate-pulse rounded-full bg-current align-text-bottom" />
+            <div className="min-w-0 max-w-[75%] flex flex-col items-start gap-1">
+                <div
+                    className={cn(
+                        "min-w-0 max-w-full rounded-2xl px-4 py-2.5 text-sm leading-relaxed overflow-hidden",
+                        isUser
+                            ? "bg-primary text-primary-foreground rounded-br-md whitespace-pre-wrap wrap-break-word"
+                            : "bg-muted text-foreground rounded-bl-md wrap-break-word [&_p]:mb-2 [&_p:last-child]:mb-0 [&_pre]:max-w-full"
+                    )}
+                >
+                    {isUser ? (
+                        content
+                    ) : (
+                        <ReactMarkdown components={markdownComponents}>{content}</ReactMarkdown>
+                    )}
+                    {isStreaming && (
+                        <span className="ml-0.5 inline-block h-4 w-1 animate-pulse rounded-full bg-current align-text-bottom" />
+                    )}
+                </div>
+                {/* Sources: tools used for this reply (hover to see) */}
+                {showSources && (
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <div
+                                className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-help border border-transparent hover:border-border rounded-md px-2 py-1 hover:bg-muted/60 transition-colors"
+                                aria-label="Tools used"
+                            >
+                                <Info className="h-3.5 w-3.5 shrink-0" />
+                                <span>Sources</span>
+                            </div>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-xs">
+                            <p className="font-medium mb-1">Tools used</p>
+                            <ul className="list-disc list-inside space-y-0.5 text-xs">
+                                {toolsUsed.map((t) => (
+                                    <li key={t}>{toolDisplayName(t)}</li>
+                                ))}
+                            </ul>
+                        </TooltipContent>
+                    </Tooltip>
                 )}
             </div>
 
@@ -244,6 +284,7 @@ export function ChatArea() {
                                     key={msg.id}
                                     role={msg.role}
                                     content={msg.content}
+                                    toolsUsed={msg.toolsUsed}
                                 />
                             ))}
 

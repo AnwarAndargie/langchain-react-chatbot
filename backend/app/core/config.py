@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     tavily_timeout_seconds: int = 30
     tavily_max_results: int = 5
     tavily_search_depth: str = "basic"  # basic | advanced (advanced uses more credits)
+    # Optional HTTP(S) proxy for Tavily (e.g. VPN proxy to avoid region blocks). Example: http://127.0.0.1:8080
+    tavily_http_proxy: str = ""
+    tavily_https_proxy: str = ""
 
     # Google Trends MCP Configuration
     mcp_url: str = "http://google-trends-mcp:8080"

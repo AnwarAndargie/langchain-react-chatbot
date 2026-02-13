@@ -27,15 +27,64 @@ logger = logging.getLogger(__name__)
 
 def _mcp_endpoint() -> str:
     base = (settings.mcp_url or "").rstrip("/")
-    return f"{base}/mcp" if base else ""
+    return f"{base}/mcp/" if base else ""
 
 
-def _auth_headers() -> dict[str, str]:
-    h: dict[str, str] = {"Content-Type": "application/json"}
+# Session ID from MCP server (initialize handshake). Keyed by URL so multiple MCP URLs work.
+_mcp_session_cache: dict[str, str] = {}
+_mcp_session_lock: asyncio.Lock = asyncio.Lock()
+
+
+def _auth_headers(session_id: Optional[str] = None) -> dict[str, str]:
+    h: dict[str, str] = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    if session_id:
+        h["mcp-session-id"] = session_id
     auth = (settings.mcp_auth_header or "").strip()
     if auth:
         h["Authorization"] = auth if auth.lower().startswith("bearer ") else f"Bearer {auth}"
     return h
+
+
+async def _ensure_mcp_session(url: str, timeout: float) -> Optional[str]:
+    """Run MCP initialize handshake if needed; return session ID for use in tool calls."""
+    async with _mcp_session_lock:
+        if url in _mcp_session_cache:
+            return _mcp_session_cache[url]
+    init_payload = {
+        "jsonrpc": "2.0",
+        "id": str(uuid.uuid4()),
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "langchain-chatbot-backend", "version": "1.0.0"},
+        },
+    }
+    init_headers = _auth_headers(session_id=None)
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            resp = await client.post(url, json=init_payload, headers=init_headers)
+    except Exception as e:
+        logger.warning("MCP initialize failed: %s", str(e)[:200])
+        return None
+    if resp.status_code != 200:
+        logger.warning("MCP initialize returned status %s", resp.status_code)
+        return None
+    session_id = None
+    for k, v in resp.headers.items():
+        if k.lower() == "mcp-session-id" and v:
+            session_id = v.strip()
+            break
+    if session_id:
+        session_id = session_id.strip()
+        async with _mcp_session_lock:
+            _mcp_session_cache[url] = session_id
+        return session_id
+    logger.warning("MCP initialize did not return mcp-session-id header")
+    return None
 
 
 # -----------------------------------------------------------------------------
@@ -44,10 +93,12 @@ def _auth_headers() -> dict[str, str]:
 
 LANGCHAIN_TOOL_NAME = "google_trends"
 LANGCHAIN_TOOL_DESCRIPTION = (
-    "Get trending search terms from Google Trends for a country, or related news. "
-    "Use this when the user asks about trending topics, what is popular in a region, "
-    "or Google Trends data. Input can be a country code (e.g. US, GB, IN) or a short "
-    "description like 'trends in US'."
+    "Get trending search terms from Google Trends for a country. "
+    "Use ONLY when the user explicitly asks for Google Trends, trending searches, "
+    "what's trending in a region/country, or 'check Google Trends'. "
+    "Input: country code (e.g. US, GB, IN) or short phrase like 'trends in US'. "
+    "Do NOT use for general definitions, technical concepts (e.g. SSE, APIs), or "
+    "web search—use tavily_web_search for those."
 )
 
 # -----------------------------------------------------------------------------
@@ -62,6 +113,24 @@ def _jsonrpc_request(method: str, params: Optional[dict[str, Any]] = None) -> di
         "method": method,
         "params": params or {},
     }
+
+
+def _parse_mcp_response_body(resp: httpx.Response) -> dict[str, Any]:
+    """
+    Parse MCP response body. Server may return JSON or SSE (text/event-stream).
+    SSE format: "event: message\\ndata: {...}\\n\\n". Extract first "data:" line as JSON.
+    """
+    content_type = (resp.headers.get("content-type") or "").lower()
+    text = resp.text or ""
+    if "text/event-stream" in content_type:
+        for line in text.splitlines():
+            line = line.strip()
+            if line.startswith("data:"):
+                payload = line[5:].strip()
+                if payload:
+                    return json.loads(payload)
+        raise ValueError("SSE response had no data line")
+    return resp.json()
 
 
 def _parse_tool_result(response_data: dict[str, Any]) -> Any:
@@ -89,6 +158,30 @@ def _parse_tool_result(response_data: dict[str, Any]) -> Any:
 # -----------------------------------------------------------------------------
 
 
+def _mcp_debug_log(payload: dict) -> None:
+    import json as _json
+    import os
+    _paths = ["/app/.cursor/debug.log", os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", ".cursor", "debug.log")]
+    _path = os.environ.get("DEBUG_LOG_PATH", _paths[0])
+    if _path == _paths[0]:
+        for _p in _paths:
+            try:
+                _d = os.path.dirname(_p)
+                if _d and not os.path.isdir(_d):
+                    os.makedirs(_d, exist_ok=True)
+                with open(_p, "a") as f:
+                    f.write(_json.dumps({**payload, "timestamp": __import__("time").time() * 1000}) + "\n")
+                return
+            except Exception:
+                continue
+    else:
+        try:
+            with open(_path, "a") as f:
+                f.write(_json.dumps({**payload, "timestamp": __import__("time").time() * 1000}) + "\n")
+        except Exception:
+            pass
+
+
 async def _call_mcp_tool_async(
     tool_name: str,
     arguments: dict[str, Any],
@@ -109,6 +202,9 @@ async def _call_mcp_tool_async(
         Dict with "data" (tool result) and "error" (str or None).
     """
     url = _mcp_endpoint()
+    # #region agent log
+    _mcp_debug_log({"location": "google_trends_mcp.py:_call_mcp_tool_async:entry", "message": "MCP _call_mcp_tool_async entry", "data": {"has_url": bool(url), "url_host": url.split("/")[2] if url and len(url.split("/")) > 2 else None, "tool_name": tool_name}, "hypothesisId": "H_mcp_entry"})
+    # #endregion
     if not url:
         return {
             "data": None,
@@ -117,22 +213,35 @@ async def _call_mcp_tool_async(
 
     timeout = timeout_seconds if timeout_seconds is not None else settings.mcp_timeout
     max_retries = retries if retries is not None else max(0, settings.mcp_max_retries)
+
+    # Initialize handshake when server uses sessions; stateless servers may not return a session ID.
+    session_id = await _ensure_mcp_session(url, float(timeout))
+
     payload = _jsonrpc_request("tools/call", {"name": tool_name, "arguments": arguments})
-    headers = _auth_headers()
+    headers = _auth_headers(session_id=session_id)
 
     last_exc: Optional[Exception] = None
     for attempt in range(max_retries + 1):
         try:
-            async with httpx.AsyncClient(timeout=float(timeout)) as client:
+            async with httpx.AsyncClient(timeout=float(timeout), follow_redirects=True) as client:
                 resp = await client.post(url, json=payload, headers=headers)
+            # #region agent log
+            _mcp_debug_log({"location": "google_trends_mcp.py:_call_mcp_tool_async:response", "message": "MCP response received", "data": {"status_code": resp.status_code, "attempt": attempt + 1}, "hypothesisId": "H_mcp_response"})
+            # #endregion
         except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as e:
             last_exc = e
+            # #region agent log
+            _mcp_debug_log({"location": "google_trends_mcp.py:_call_mcp_tool_async:connection_err", "message": "MCP connection error", "data": {"exc_type": type(e).__name__, "exc_msg": str(e)[:300], "attempt": attempt + 1}, "hypothesisId": "H_mcp_connection"})
+            # #endregion
             logger.warning("MCP connection attempt %s failed: %s", attempt + 1, str(e)[:200])
             if attempt < max_retries:
                 await asyncio.sleep(0.5 * (attempt + 1))
             continue
         except Exception as e:
             last_exc = e
+            # #region agent log
+            _mcp_debug_log({"location": "google_trends_mcp.py:_call_mcp_tool_async:request_err", "message": "MCP request exception", "data": {"exc_type": type(e).__name__, "exc_msg": str(e)[:300]}, "hypothesisId": "H_mcp_request_err"})
+            # #endregion
             logger.warning("MCP request failed: %s", str(e)[:200])
             return {
                 "data": None,
@@ -140,6 +249,12 @@ async def _call_mcp_tool_async(
             }
 
         if resp.status_code != 200:
+            # #region agent log
+            _mcp_debug_log({"location": "google_trends_mcp.py:_call_mcp_tool_async:non200", "message": "MCP non-200 status", "data": {"status_code": resp.status_code, "body_preview": (resp.text or "")[:400]}, "hypothesisId": "H_mcp_non200"})
+            # #endregion
+            if resp.status_code == 404 and url in _mcp_session_cache:
+                async with _mcp_session_lock:
+                    _mcp_session_cache.pop(url, None)
             logger.warning("MCP returned status %s", resp.status_code)
             return {
                 "data": None,
@@ -147,8 +262,21 @@ async def _call_mcp_tool_async(
             }
 
         try:
-            body = resp.json()
+            body = _parse_mcp_response_body(resp)
         except Exception as e:
+            # #region agent log
+            _mcp_debug_log({
+                "location": "google_trends_mcp.py:_call_mcp_tool_async:json_fail",
+                "message": "MCP response body not valid JSON",
+                "data": {
+                    "exc_type": type(e).__name__,
+                    "exc_msg": str(e)[:200],
+                    "content_type": resp.headers.get("content-type", ""),
+                    "body_preview": (resp.text or "")[:800],
+                },
+                "hypothesisId": "H_mcp_invalid_json",
+            })
+            # #endregion
             logger.warning("MCP response not JSON: %s", e)
             return {"data": None, "error": "Invalid response from Google Trends service."}
 

@@ -8,14 +8,52 @@ and logic is reusable and testable.
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+import time
+from typing import Any, Callable, Optional, TypeVar
 from uuid import UUID
+
+import httpx
 
 from app.services.db import Conversation, Message
 from app.services.db.supabase_client import get_supabase_client_for_user
 from app.services.agent import invoke_agent_async, stream_agent_async
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+# Connection errors that may be transient (Supabase/PostgREST "Server disconnected").
+def _is_connection_error(exc: BaseException) -> bool:
+    if isinstance(exc, (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ConnectTimeout)):
+        return True
+    try:
+        import httpcore
+        if isinstance(exc, httpcore.RemoteProtocolError):
+            return True
+    except ImportError:
+        pass
+    if exc.__class__.__name__ == "RemoteProtocolError" and "httpcore" in (exc.__class__.__module__ or ""):
+        return True
+    if isinstance(exc, OSError) and "disconnected" in str(exc).lower():
+        return True
+    return False
+
+
+def _with_retry_on_disconnect(fn: Callable[[], T], max_attempts: int = 2) -> T:
+    """Run fn(); on connection/disconnect errors, retry once after a short delay."""
+    last: Optional[BaseException] = None
+    for attempt in range(max_attempts):
+        try:
+            return fn()
+        except Exception as e:
+            last = e
+            if _is_connection_error(e) and attempt < max_attempts - 1:
+                logger.warning("Supabase connection error (attempt %s), retrying: %s", attempt + 1, str(e)[:200])
+                time.sleep(0.3)
+                continue
+            raise
+    assert last is not None
+    raise last
 
 # Default number of recent messages to pass to the agent for context
 DEFAULT_AGENT_HISTORY_LIMIT = 20
@@ -176,6 +214,7 @@ async def send_message_stream(
     )
 
     full_content_parts: list[str] = []
+    tools_used: list[str] = []
     try:
         async for event in stream_agent_async(content, history):
             if event["type"] == "token":
@@ -184,6 +223,9 @@ async def send_message_stream(
                     full_content_parts.append(text)
                     yield {"type": "chunk", "content": text}
             elif event["type"] == "tool_start":
+                tool_name = event.get("tool") or ""
+                if tool_name and tool_name not in tools_used:
+                    tools_used.append(tool_name)
                 yield {"type": "tool_start", "tool": event["tool"]}
     except Exception as e:
         logger.exception("Stream failed: %s", e)
@@ -191,15 +233,27 @@ async def send_message_stream(
         yield {"type": "chunk", "content": full_content_parts[-1]}
 
     assistant_content = "".join(full_content_parts).strip()
+    metadata: dict[str, Any] = {}
+    if tools_used:
+        metadata["tools_used"] = tools_used
     assistant_msg = msg_repo.create(
         conversation_id=conv_id,
         user_id=user_id,
         role="assistant",
         content=assistant_content or "(No response)",
+        metadata=metadata if metadata else None,
     )
     if conversation_created:
         title = content[:200] + ("..." if len(content) > 200 else "")
         conv_repo.update(conv_id, user_id, title=title)
+
+    # Include tools_used in message for frontend (and ensure it's on the returned object)
+    if assistant_msg and tools_used:
+        assistant_msg = dict(assistant_msg)
+        if assistant_msg.get("metadata") is None:
+            assistant_msg["metadata"] = {}
+        assistant_msg["metadata"] = dict(assistant_msg["metadata"])
+        assistant_msg["metadata"]["tools_used"] = tools_used
 
     yield {
         "type": "done",
@@ -231,7 +285,11 @@ def list_conversations(
         raise ValueError("Access token is required for RLS")
     user_id = _parse_uuid(user_id) or user_id
     client = get_supabase_client_for_user(access_token)
-    return Conversation(client=client).get_by_user_id(user_id, limit=limit, offset=offset)
+
+    def _fetch() -> list[dict[str, Any]]:
+        return Conversation(client=client).get_by_user_id(user_id, limit=limit, offset=offset)
+
+    return _with_retry_on_disconnect(_fetch)
 
 
 def get_messages(
@@ -264,14 +322,20 @@ def get_messages(
     conv_repo = Conversation(client=client)
     msg_repo = Message(client=client)
 
-    conv = conv_repo.get_by_id(conv_id, user_id)
+    def _fetch_conv() -> Optional[dict]:
+        return conv_repo.get_by_id(conv_id, user_id)
+
+    conv = _with_retry_on_disconnect(_fetch_conv)
     if not conv:
         return None, []
 
-    messages = msg_repo.get_by_conversation_id(
-        conversation_id=conv_id,
-        user_id=user_id,
-        limit=limit,
-        offset=offset,
-    )
+    def _fetch_messages() -> list[dict[str, Any]]:
+        return msg_repo.get_by_conversation_id(
+            conversation_id=conv_id,
+            user_id=user_id,
+            limit=limit,
+            offset=offset,
+        )
+
+    messages = _with_retry_on_disconnect(_fetch_messages)
     return conv, messages

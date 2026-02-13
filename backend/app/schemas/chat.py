@@ -22,7 +22,7 @@ Stream (POST /chat/message/stream) returns Server-Sent Events (text/event-stream
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -58,6 +58,7 @@ class MessageResponse(BaseModel):
     role: str = Field(..., description="'user', 'assistant', or 'system'")
     content: str
     timestamp: datetime
+    tools_used: Optional[List[str]] = Field(default=None, description="Tools used for this reply (assistant only)")
 
     class Config:
         from_attributes = True

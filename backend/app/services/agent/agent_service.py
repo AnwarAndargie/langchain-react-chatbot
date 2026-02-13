@@ -72,23 +72,34 @@ def _tavily_invoke(query: str) -> str:
     """LangChain-callable Tavily search; input is the search query string."""
     if not (query or "").strip():
         return "Error: search query cannot be empty."
-    out = search_tavily(query.strip(), max_results=settings.tavily_max_results)
+    out = search_tavily(
+        query.strip(),
+        max_results=settings.tavily_max_results,
+        include_answer=True,
+    )
     return _format_tavily_result(out)
 
 
 def _google_trends_invoke(geo_or_query: str) -> str:
     """LangChain-callable Google Trends; input is country code or short description (e.g. 'US', 'trends in UK')."""
-    raw = (geo_or_query or "US").strip()
-    # Extract country code if user wrote something like "trends in UK" or "what's trending in India"
-    geo = "US"
-    for part in raw.upper().replace(",", " ").split():
-        if len(part) == 2 and part.isalpha():
-            geo = part
-            break
-    if raw.upper() in ("US", "UK", "GB", "IN", "DE", "FR", "JP", "BR", "CA", "AU"):
-        geo = "GB" if raw.upper() in ("UK", "GB") else raw.upper()
-    out = get_google_trends(geo=geo, full_data=False)
-    return _format_trends_result(out)
+    try:
+        raw = (geo_or_query or "US").strip()
+        # Extract country code if user wrote something like "trends in UK" or "what's trending in India"
+        geo = "US"
+        for part in raw.upper().replace(",", " ").split():
+            if len(part) == 2 and part.isalpha():
+                geo = part
+                break
+        if raw.upper() in ("US", "UK", "GB", "IN", "DE", "FR", "JP", "BR", "CA", "AU"):
+            geo = "GB" if raw.upper() in ("UK", "GB") else raw.upper()
+        out = get_google_trends(geo=geo, full_data=False)
+        return _format_trends_result(out)
+    except Exception as e:
+        logger.warning("Google Trends tool error (MCP may be down): %s", str(e)[:200])
+        return (
+            "Trends error: The trends service is temporarily unavailable. "
+            "Please try again later, or ask something else."
+        )
 
 
 # -----------------------------------------------------------------------------
@@ -120,12 +131,34 @@ def _build_tools() -> List[Any]:
     return tools
 
 
+# Gemini 3 models require thought_signature on function calls; LangChain does not yet
+# preserve it when sending conversation history, so tool calling fails with 400.
+# Use a model that does not require thought_signature for tool calling.
+GEMINI_MODEL_TOOL_SAFE = "gemini-2.5-flash"
+
+
+def _model_for_tools() -> str:
+    """Return a model name that works with tool calling (no thought_signature requirement)."""
+    model = (settings.gemini_model or "").strip().lower()
+    if not model:
+        return GEMINI_MODEL_TOOL_SAFE
+    if "gemini-3" in model or "gemini-3.0" in model:
+        logger.warning(
+            "Gemini 3 models require thought_signature for tool calls; LangChain does not "
+            "support this yet. Using %s for the agent so tools (Tavily, MCP) work.",
+            GEMINI_MODEL_TOOL_SAFE,
+        )
+        return GEMINI_MODEL_TOOL_SAFE
+    return settings.gemini_model
+
+
 def _get_llm(streaming: bool = False):
     """Return ChatGoogleGenerativeAI instance from settings. Use streaming=True for token-level stream."""
     from langchain_google_genai import ChatGoogleGenerativeAI
 
+    model = _model_for_tools()
     return ChatGoogleGenerativeAI(
-        model=settings.gemini_model,
+        model=model,
         google_api_key=settings.gemini_api_key or "dummy",
         temperature=0.2,
         max_output_tokens=2048,
@@ -145,22 +178,31 @@ def _create_agent(streaming: bool = False):
             return _create_fallback_chain_streaming()
         return _create_fallback_chain()
 
+    create_tool_calling_agent = None
+    AgentExecutor = None
     try:
-        from langchain.agents import AgentExecutor, create_tool_calling_agent
-    except ImportError:
+        from langchain.agents.tool_calling_agent.base import create_tool_calling_agent
+        from langchain.agents import AgentExecutor
+    except ImportError as e1:
         try:
-            from langchain.agents.tool_calling_agent.base import create_tool_calling_agent
-            from langchain.agents import AgentExecutor
-        except ImportError:
-            logger.warning("Tool-calling agent not available; using fallback chain")
+            from langchain.agents import AgentExecutor, create_tool_calling_agent
+        except ImportError as e2:
+            logger.warning(
+                "Tool-calling agent not available; using fallback chain. "
+                "Try: pip install 'langchain>=0.2.0,<1.0.0'. Errors: %s ; %s",
+                e1,
+                e2,
+            )
             if streaming:
                 return _create_fallback_chain_streaming()
             return _create_fallback_chain()
 
     prompt = ChatPromptTemplate.from_messages([
         ("system", (
-            "You are a helpful assistant with access to tools. Use them when they would help answer the user. "
-            "When you use a tool, summarize the result clearly for the user. If a tool fails, say so and answer from your knowledge if possible."
+            "You are a helpful assistant with access to tools. Use them only when they clearly match the user's request. "
+            "When you use a tool, summarize the result clearly and concisely for the user. "
+            "If a tool returns an error or says it is unavailable, tell the user in a friendly way and offer to help with something else or answer from your knowledge if possible. "
+            "Do not call a tool for general knowledge questions unless the user explicitly needs web search or trends."
         )),
         MessagesPlaceholder(variable_name="chat_history", optional=True),
         ("human", "{input}"),

@@ -1,4 +1,4 @@
-import { apiRequest, setAuthToken, setStoredUser } from "@/api/client";
+import { apiRequest, getApiUrl, getAuthToken, setAuthToken, setStoredUser } from "@/api/client";
 import type { LoginCredentials, RegisterCredentials, TokenResponse, User } from "@/types/auth";
 
 /** Backend returns flat shape; we normalize to TokenResponse with nested user */
@@ -50,11 +50,31 @@ export async function register(credentials: RegisterCredentials): Promise<TokenR
   return normalized;
 }
 
+/**
+ * Logout: clear local session first (so no 401 handler or double-logout sends
+ * a request without a token), then optionally notify the backend if we had a token.
+ * Uses direct fetch for the logout request so a 401 (e.g. expired token) does not
+ * trigger auth:unauthorized and a logout loop.
+ */
 export async function logout(): Promise<void> {
+  const token = getAuthToken();
+  setAuthToken(null);
+  setStoredUser(null);
+
+  if (!token) return;
+
   try {
-    await apiRequest("/auth/logout", { method: "POST" });
-  } finally {
-    setAuthToken(null);
-    setStoredUser(null);
+    const res = await fetch(getApiUrl("/auth/logout"), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    if (!res.ok) {
+      // Best-effort: do not throw or dispatch; we are already logged out locally
+    }
+  } catch {
+    // Ignore network errors; local session is already cleared
   }
 }

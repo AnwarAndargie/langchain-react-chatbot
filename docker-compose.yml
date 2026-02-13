@@ -10,6 +10,7 @@ services:
       - .env
     volumes:
       - ./backend:/app
+      - ./.cursor:/app/.cursor
     depends_on:
       - google-trends-mcp
     environment:

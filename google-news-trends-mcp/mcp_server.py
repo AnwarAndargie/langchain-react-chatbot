@@ -12,9 +12,18 @@ from tools import BrowserManager, register_tools
 
 class AuthorizationMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
+        # Skip JWT verification when not configured (e.g. backend and MCP on same private network)
+        try:
+            from load_var import load_var
+            if not (getattr(load_var, "_MCP_JWT_ISSUER", None) or "").strip():
+                return await call_next(request)
+        except Exception:
+            pass
         try:
             verify_mcp_jwt(request.headers)
         except UnauthorizedError as exc:
+            return JSONResponse({"error": {"message": str(exc)}}, status_code=401)
+        except PermissionError as exc:
             return JSONResponse({"error": {"message": str(exc)}}, status_code=401)
         return await call_next(request)
 
@@ -34,4 +43,8 @@ mcp = FastMCP(
 
 register_tools(mcp)
 
-mcp_http_app = mcp.http_app(path="/", middleware=[Middleware(AuthorizationMiddleware)])
+mcp_http_app = mcp.http_app(
+    path="/",
+    middleware=[Middleware(AuthorizationMiddleware)],
+    stateless_http=False,
+)

@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
 import { CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { KeyRound, Mail, User } from "lucide-react"
+import { KeyRound, Loader2, Mail, User } from "lucide-react"
 import { useAuth } from "@/state/AuthContext"
 
 const formSchema = z.object({
@@ -42,6 +42,7 @@ export function SignUpForm() {
             confirmPassword: "",
         },
     })
+    const isSubmitting = form.formState.isSubmitting
 
     async function onSubmit(values: z.infer<typeof formSchema>) {
         clearError()
@@ -135,8 +136,15 @@ export function SignUpForm() {
                         {error && (
                             <p className="text-sm text-destructive">{error}</p>
                         )}
-                        <Button type="submit" className="w-full">
-                            Sign Up
+                        <Button type="submit" className="w-full" disabled={isSubmitting}>
+                            {isSubmitting ? (
+                                <>
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    Creating account…
+                                </>
+                            ) : (
+                                "Sign Up"
+                            )}
                         </Button>
                     </form>
                 </Form>

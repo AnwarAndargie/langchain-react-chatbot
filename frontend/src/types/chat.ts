@@ -7,6 +7,8 @@ export interface Message {
     role: "user" | "assistant" | "system";
     content: string;
     timestamp: string;
+    /** Tools used for this reply (from stream or from API tools_used). */
+    toolsUsed?: string[];
 }
 
 /** Conversation summary returned by the list endpoint. */
