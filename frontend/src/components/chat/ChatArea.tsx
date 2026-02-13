@@ -15,6 +15,7 @@ import {
     TrendingUp,
     User,
 } from "lucide-react"
+import ReactMarkdown from "react-markdown"
 import { useChat } from "@/state/ChatContext"
 import type { Message } from "@/types/chat"
 
@@ -36,6 +37,35 @@ interface MessageBubbleProps {
     isStreaming?: boolean
 }
 
+/* Markdown styling for assistant messages */
+const markdownComponents = {
+    p: ({ children, ...props }) => <p className="mb-2 last:mb-0 wrap-break-word" {...props}>{children}</p>,
+    strong: ({ children, ...props }) => <strong className="font-semibold" {...props}>{children}</strong>,
+    ul: ({ children, ...props }) => <ul className="my-2 list-disc pl-5 space-y-0.5 wrap-break-word" {...props}>{children}</ul>,
+    ol: ({ children, ...props }) => <ol className="my-2 list-decimal pl-5 space-y-0.5 wrap-break-word" {...props}>{children}</ol>,
+    li: ({ children, ...props }) => <li className="leading-relaxed wrap-break-word" {...props}>{children}</li>,
+    code: ({ className, children, ...props }) => {
+        const isBlock = className?.includes("language-")
+        return isBlock ? (
+            <code className={cn("block rounded bg-muted-foreground/15 px-3 py-2 text-[0.9em] font-mono whitespace-pre-wrap break-all", className)} {...props}>
+                {children}
+            </code>
+        ) : (
+            <code className="rounded bg-muted-foreground/15 px-1.5 py-0.5 text-[0.9em] font-mono break-all" {...props}>
+                {children}
+            </code>
+        )
+    },
+    pre: ({ children, ...props }) => (
+        <pre className="my-2 max-w-full overflow-x-auto rounded bg-muted-foreground/15 px-3 py-2 text-[0.9em] font-mono whitespace-pre" {...props}>
+            {children}
+        </pre>
+    ),
+    a: ({ children, ...props }) => (
+        <a className="break-all text-primary underline underline-offset-2" {...props}>{children}</a>
+    ),
+}
+
 function MessageBubble({ role, content, isStreaming }: MessageBubbleProps) {
     const isUser = role === "user"
 
@@ -50,13 +80,17 @@ function MessageBubble({ role, content, isStreaming }: MessageBubbleProps) {
 
             <div
                 className={cn(
-                    "max-w-[75%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap break-words",
+                    "min-w-0 max-w-[75%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed overflow-hidden",
                     isUser
-                        ? "bg-primary text-primary-foreground rounded-br-md"
-                        : "bg-muted text-foreground rounded-bl-md"
+                        ? "bg-primary text-primary-foreground rounded-br-md whitespace-pre-wrap wrap-break-word"
+                        : "bg-muted text-foreground rounded-bl-md wrap-break-word [&_p]:mb-2 [&_p:last-child]:mb-0 [&_pre]:max-w-full"
                 )}
             >
-                {content}
+                {isUser ? (
+                    content
+                ) : (
+                    <ReactMarkdown components={markdownComponents}>{content}</ReactMarkdown>
+                )}
                 {isStreaming && (
                     <span className="ml-0.5 inline-block h-4 w-1 animate-pulse rounded-full bg-current align-text-bottom" />
                 )}
