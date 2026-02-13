@@ -17,6 +17,7 @@ interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
+  successMessage: string | null;
 }
 
 interface AuthContextValue extends AuthState {
@@ -24,6 +25,7 @@ interface AuthContextValue extends AuthState {
   register: (credentials: RegisterCredentials) => Promise<void>;
   logout: () => Promise<void>;
   clearError: () => void;
+  clearSuccessMessage: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -33,11 +35,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const isAuthenticated = !!token && !!user;
 
   const login = useCallback(async (credentials: LoginCredentials) => {
     setError(null);
+    setSuccessMessage(null);
     try {
       const data = await apiLogin(credentials);
       setToken(data.access_token);
@@ -51,10 +55,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const register = useCallback(async (credentials: RegisterCredentials) => {
     setError(null);
+    setSuccessMessage(null);
     try {
-      const data = await apiRegister(credentials);
-      setToken(data.access_token);
-      setUser(data.user);
+      const result = await apiRegister(credentials);
+      if ("requires_confirmation" in result && result.requires_confirmation) {
+        setSuccessMessage(result.message);
+        return;
+      }
+      setToken(result.access_token);
+      setUser(result.user);
     } catch (e) {
       const message = e instanceof Error ? e.message : "Sign up failed";
       setError(message);
@@ -75,6 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const clearError = useCallback(() => setError(null), []);
+  const clearSuccessMessage = useCallback(() => setSuccessMessage(null), []);
 
   // Restore session from storage on mount
   useEffect(() => {
@@ -142,12 +152,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated,
       isLoading,
       error,
+      successMessage,
       login,
       register,
       logout,
       clearError,
+      clearSuccessMessage,
     }),
-    [user, token, isAuthenticated, isLoading, error, login, register, logout, clearError]
+    [user, token, isAuthenticated, isLoading, error, successMessage, login, register, logout, clearError, clearSuccessMessage]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

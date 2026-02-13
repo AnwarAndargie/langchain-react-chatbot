@@ -15,8 +15,9 @@ class AuthRateLimitError(Exception):
 def signup_user(email: str, password: str) -> Tuple[Optional[dict], Optional[str]]:
     """
     Register a new user with Supabase Auth.
-    Supabase returns user + session for new signups; for an existing email
-    it returns user but session is None (to avoid email enumeration).
+    When Confirm email is enabled: new user gets user + no session (confirmation sent);
+    existing email gets user + no session. Use identities to tell them apart:
+    non-empty identities = new user (confirmation email sent), empty = already exists.
     """
     try:
         client = get_supabase_client()
@@ -26,17 +27,21 @@ def signup_user(email: str, password: str) -> Tuple[Optional[dict], Optional[str
         })
         if not response.user:
             return None, "Failed to create user"
-        # Existing email: Supabase returns user but no session
-        if not getattr(response, "session", None):
-            return None, "An account with this email already exists. Please sign in."
-        session = response.session
-        return {
-            "id": UUID(response.user.id),
-            "email": response.user.email,
-            "access_token": session.access_token,
-            "refresh_token": session.refresh_token,
-            "expires_at": getattr(session, "expires_at", None),
-        }, None
+        session = getattr(response, "session", None)
+        if session:
+            return {
+                "id": UUID(response.user.id),
+                "email": response.user.email,
+                "access_token": session.access_token,
+                "refresh_token": session.refresh_token,
+                "expires_at": getattr(session, "expires_at", None),
+            }, None
+        # No session: either new user (confirmation email sent) or existing email
+        identities = getattr(response.user, "identities", None) or []
+        if identities:
+            # New user; confirmation email was sent
+            return {"requires_confirmation": True, "email": response.user.email}, None
+        return None, "An account with this email already exists. Please sign in."
     except Exception as e:
         err = str(e).lower()
         if "rate limit" in err or "rate_limit" in err:

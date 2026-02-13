@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
 import { CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { KeyRound, Loader2, Mail, User } from "lucide-react"
+import { CheckCircle2, KeyRound, Loader2, Mail, User } from "lucide-react"
 import { useAuth } from "@/state/AuthContext"
 
 const formSchema = z.object({
@@ -32,7 +32,7 @@ const formSchema = z.object({
 })
 
 export function SignUpForm() {
-    const { register: registerUser, error, clearError } = useAuth()
+    const { register: registerUser, error, successMessage, clearError, clearSuccessMessage } = useAuth()
     const form = useForm<z.infer<typeof formSchema>>({
         resolver: zodResolver(formSchema),
         defaultValues: {
@@ -46,6 +46,7 @@ export function SignUpForm() {
 
     async function onSubmit(values: z.infer<typeof formSchema>) {
         clearError()
+        clearSuccessMessage()
         try {
             await registerUser({
                 email: values.email,
@@ -133,6 +134,12 @@ export function SignUpForm() {
                                 </FormItem>
                             )}
                         />
+                        {successMessage && (
+                            <p className="flex items-center gap-2 text-sm text-green-600 dark:text-green-500">
+                                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                                {successMessage}
+                            </p>
+                        )}
                         {error && (
                             <p className="text-sm text-destructive">{error}</p>
                         )}

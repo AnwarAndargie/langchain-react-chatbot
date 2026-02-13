@@ -2,6 +2,7 @@
 
 import time
 from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi.responses import JSONResponse
 from app.schemas.auth import RegisterRequest, LoginRequest, AuthResponse
 from app.utils.supabase_auth import signup_user, signin_user, signout_user, AuthRateLimitError
 from app.middleware import get_current_user
@@ -17,11 +18,12 @@ def _expires_in_seconds(expires_at: float | None) -> int:
     return max(0, int(expires_at - now))
 
 
-@router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register(request: RegisterRequest):
     """
-    Register a new user. Returns Supabase access token so the client can use it
-    for API auth and so RLS applies correctly on the backend.
+    Register a new user. Returns Supabase access token when email confirmation
+    is disabled; when confirmation is enabled, returns requires_confirmation
+    and a message to check email.
     """
     try:
         user_data, error = signup_user(request.email, request.password)
@@ -31,10 +33,19 @@ async def register(request: RegisterRequest):
             detail=str(e),
         ) from e
 
-    if error or not user_data:
+    if error:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=error or "Registration failed"
+            detail=error,
+        )
+
+    if user_data.get("requires_confirmation"):
+        return JSONResponse(
+            status_code=status.HTTP_201_CREATED,
+            content={
+                "requires_confirmation": True,
+                "message": "Check your email to confirm your account.",
+            },
         )
 
     return AuthResponse(

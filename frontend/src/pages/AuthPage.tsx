@@ -6,7 +6,7 @@ import { SignUpForm } from "@/components/auth/SignUpForm"
 import { useAuth } from "@/state/AuthContext"
 
 export default function AuthPage() {
-    const { isAuthenticated, isLoading } = useAuth()
+    const { isAuthenticated, isLoading, clearSuccessMessage } = useAuth()
     const navigate = useNavigate()
     const [view, setView] = useState<"signin" | "signup">("signin")
 
@@ -45,7 +45,7 @@ export default function AuthPage() {
                         <p>
                             Don&apos;t have an account?{" "}
                             <button
-                                onClick={() => setView("signup")}
+                                onClick={() => { clearSuccessMessage(); setView("signup"); }}
                                 className="underline underline-offset-4 hover:text-primary font-medium"
                             >
                                 Sign up
@@ -55,7 +55,7 @@ export default function AuthPage() {
                         <p>
                             Already have an account?{" "}
                             <button
-                                onClick={() => setView("signin")}
+                                onClick={() => { clearSuccessMessage(); setView("signin"); }}
                                 className="underline underline-offset-4 hover:text-primary font-medium"
                             >
                                 Sign in

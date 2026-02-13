@@ -10,6 +10,12 @@ interface AuthApiResponse {
   expires_in?: number;
 }
 
+/** When email confirmation is enabled, register returns this instead of tokens */
+export interface RequiresConfirmationResponse {
+  requires_confirmation: true;
+  message: string;
+}
+
 function normalizeAuthResponse(data: AuthApiResponse): TokenResponse {
   const user: User = {
     id: String(data.user_id),
@@ -35,8 +41,10 @@ export async function login(credentials: LoginCredentials): Promise<TokenRespons
   return normalized;
 }
 
-export async function register(credentials: RegisterCredentials): Promise<TokenResponse> {
-  const data = await apiRequest<AuthApiResponse>("/auth/register", {
+export type RegisterResult = TokenResponse | RequiresConfirmationResponse;
+
+export async function register(credentials: RegisterCredentials): Promise<RegisterResult> {
+  const data = await apiRequest<AuthApiResponse | RequiresConfirmationResponse>("/auth/register", {
     method: "POST",
     body: JSON.stringify({
       email: credentials.email,
@@ -44,7 +52,12 @@ export async function register(credentials: RegisterCredentials): Promise<TokenR
     }),
     skipAuth: true,
   });
-  const normalized = normalizeAuthResponse(data);
+
+  if ("requires_confirmation" in data && data.requires_confirmation) {
+    return { requires_confirmation: true, message: data.message };
+  }
+
+  const normalized = normalizeAuthResponse(data as AuthApiResponse);
   setAuthToken(normalized.access_token);
   setStoredUser(normalized.user);
   return normalized;
