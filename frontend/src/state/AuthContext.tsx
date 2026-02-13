@@ -140,8 +140,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return () => clearTimeout(timeoutId);
         }
       }
-    } catch (e) {
-      console.error("Failed to parse token for auto-logout", e);
+    } catch {
+      // Token invalid or unparseable; ignore (user will be logged out on next 401)
     }
   }, [token, logout]);
 

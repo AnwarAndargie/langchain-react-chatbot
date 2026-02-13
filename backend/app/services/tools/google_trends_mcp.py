@@ -158,30 +158,6 @@ def _parse_tool_result(response_data: dict[str, Any]) -> Any:
 # -----------------------------------------------------------------------------
 
 
-def _mcp_debug_log(payload: dict) -> None:
-    import json as _json
-    import os
-    _paths = ["/app/.cursor/debug.log", os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", ".cursor", "debug.log")]
-    _path = os.environ.get("DEBUG_LOG_PATH", _paths[0])
-    if _path == _paths[0]:
-        for _p in _paths:
-            try:
-                _d = os.path.dirname(_p)
-                if _d and not os.path.isdir(_d):
-                    os.makedirs(_d, exist_ok=True)
-                with open(_p, "a") as f:
-                    f.write(_json.dumps({**payload, "timestamp": __import__("time").time() * 1000}) + "\n")
-                return
-            except Exception:
-                continue
-    else:
-        try:
-            with open(_path, "a") as f:
-                f.write(_json.dumps({**payload, "timestamp": __import__("time").time() * 1000}) + "\n")
-        except Exception:
-            pass
-
-
 async def _call_mcp_tool_async(
     tool_name: str,
     arguments: dict[str, Any],
@@ -202,9 +178,6 @@ async def _call_mcp_tool_async(
         Dict with "data" (tool result) and "error" (str or None).
     """
     url = _mcp_endpoint()
-    # #region agent log
-    _mcp_debug_log({"location": "google_trends_mcp.py:_call_mcp_tool_async:entry", "message": "MCP _call_mcp_tool_async entry", "data": {"has_url": bool(url), "url_host": url.split("/")[2] if url and len(url.split("/")) > 2 else None, "tool_name": tool_name}, "hypothesisId": "H_mcp_entry"})
-    # #endregion
     if not url:
         return {
             "data": None,
@@ -225,23 +198,14 @@ async def _call_mcp_tool_async(
         try:
             async with httpx.AsyncClient(timeout=float(timeout), follow_redirects=True) as client:
                 resp = await client.post(url, json=payload, headers=headers)
-            # #region agent log
-            _mcp_debug_log({"location": "google_trends_mcp.py:_call_mcp_tool_async:response", "message": "MCP response received", "data": {"status_code": resp.status_code, "attempt": attempt + 1}, "hypothesisId": "H_mcp_response"})
-            # #endregion
         except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as e:
             last_exc = e
-            # #region agent log
-            _mcp_debug_log({"location": "google_trends_mcp.py:_call_mcp_tool_async:connection_err", "message": "MCP connection error", "data": {"exc_type": type(e).__name__, "exc_msg": str(e)[:300], "attempt": attempt + 1}, "hypothesisId": "H_mcp_connection"})
-            # #endregion
             logger.warning("MCP connection attempt %s failed: %s", attempt + 1, str(e)[:200])
             if attempt < max_retries:
                 await asyncio.sleep(0.5 * (attempt + 1))
             continue
         except Exception as e:
             last_exc = e
-            # #region agent log
-            _mcp_debug_log({"location": "google_trends_mcp.py:_call_mcp_tool_async:request_err", "message": "MCP request exception", "data": {"exc_type": type(e).__name__, "exc_msg": str(e)[:300]}, "hypothesisId": "H_mcp_request_err"})
-            # #endregion
             logger.warning("MCP request failed: %s", str(e)[:200])
             return {
                 "data": None,
@@ -249,9 +213,6 @@ async def _call_mcp_tool_async(
             }
 
         if resp.status_code != 200:
-            # #region agent log
-            _mcp_debug_log({"location": "google_trends_mcp.py:_call_mcp_tool_async:non200", "message": "MCP non-200 status", "data": {"status_code": resp.status_code, "body_preview": (resp.text or "")[:400]}, "hypothesisId": "H_mcp_non200"})
-            # #endregion
             if resp.status_code == 404 and url in _mcp_session_cache:
                 async with _mcp_session_lock:
                     _mcp_session_cache.pop(url, None)
@@ -264,19 +225,6 @@ async def _call_mcp_tool_async(
         try:
             body = _parse_mcp_response_body(resp)
         except Exception as e:
-            # #region agent log
-            _mcp_debug_log({
-                "location": "google_trends_mcp.py:_call_mcp_tool_async:json_fail",
-                "message": "MCP response body not valid JSON",
-                "data": {
-                    "exc_type": type(e).__name__,
-                    "exc_msg": str(e)[:200],
-                    "content_type": resp.headers.get("content-type", ""),
-                    "body_preview": (resp.text or "")[:800],
-                },
-                "hypothesisId": "H_mcp_invalid_json",
-            })
-            # #endregion
             logger.warning("MCP response not JSON: %s", e)
             return {"data": None, "error": "Invalid response from Google Trends service."}
 
